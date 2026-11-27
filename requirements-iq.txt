@@ -1,0 +1,4 @@
+# Unofficial community connector for IQ Option (no official API exists).
+git+https://github.com/Lu-Yi-Hsun/iqoptionapi.git
+websocket-client==0.56.0
+requests

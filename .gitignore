@@ -1,0 +1,6 @@
+.env
+__pycache__/
+.pytest_cache/
+data/*.csv
+models/*.joblib
+signals_log.jsonl
