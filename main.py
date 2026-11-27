@@ -33,7 +33,10 @@ def cmd_collect(a):
 
 def cmd_train(a):
     csv, model_path = paths(a.asset)
-    df = data.load_csv(a.csv or csv)
+    src_csv = Path(a.csv or csv)
+    if not src_csv.exists():
+        raise SystemExit(f"No data file {src_csv}. Run first:  python main.py collect --asset {a.asset}")
+    df = data.load_csv(src_csv)
     print(f"Training on {len(df)} candles ({df.index[0]} → {df.index[-1]})")
     bundle = train_and_validate(df, payout=a.payout, n_folds=a.folds, min_trades=a.min_trades)
     bundle["asset"] = a.asset

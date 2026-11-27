@@ -44,7 +44,17 @@ class IQOptionSource:
         self.api = IQ_Option(self.email, self.password)
         ok, reason = self.api.connect()
         if not ok:
-            raise SystemExit(f"IQ Option login failed: {reason}")
+            e = self.email
+            masked = (e[:2] + "***" + e[e.find("@"):]) if "@" in e else "(not an email)"
+            hint = ""
+            if e == "you@example.com":
+                hint = "\n  .env still has the EXAMPLE values - edit it and save (CTRL+O, Enter, CTRL+X)."
+            raise SystemExit(
+                f"IQ Option login failed: {reason}\n"
+                f"  Email used: {masked}  (password length: {len(self.password)})" + hint +
+                "\n  Check: same email/password you type on the IQ Option website; no spaces;"
+                "\n  if you sign in with Google/Facebook you must first set a password in IQ Option settings;"
+                "\n  turn off 2-step verification for the demo account if it is on.")
         self.api.change_balance(self.account)  # PRACTICE = demo account
         return self
 
