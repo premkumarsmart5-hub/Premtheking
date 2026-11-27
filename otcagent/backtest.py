@@ -100,10 +100,10 @@ def train_and_validate(df: pd.DataFrame, payout: float = 0.85, horizons=HORIZONS
         log(f"\n=== Expiry {h} min | {len(X)} samples ===")
         probs, parts = walk_forward(X, y, h, n_folds=n_folds)
         yy = y.loc[probs.index]
-        acc = float(((probs > 0.5) == (yy == 1)).mean())
+        acc = float(np.mean((probs.to_numpy() > 0.5) == (yy.to_numpy() == 1)))
         log(f"Out-of-sample direction accuracy (every candle): {acc:.2%}")
         for k, v in parts.items():
-            a_k = float(((v > 0.5) == (y.loc[v.index] == 1)).mean())
+            a_k = float(np.mean((v.to_numpy() > 0.5) == (y.loc[v.index].to_numpy() == 1)))
             log(f"   {k:<12} alone: {a_k:.2%}")
         tab = evaluate_thresholds(probs, y, payout, min_trades)
         best = choose_threshold(tab)

@@ -115,17 +115,22 @@ def load_csv(path: str) -> pd.DataFrame:
     if tcol is None:
         raise ValueError("CSV needs a time column (time/timestamp/date/from)")
     t = df[tcol]
+    if np.issubdtype(t.dtype, np.number) and len(t) and t.max() < 1_000_000_000:
+        raise SystemExit(f"{path} has broken timestamps (saved by an older version). "
+                         f"Delete it and run collect again:  rm {path}")
     df.index = pd.to_datetime(t, unit="s", utc=True) if np.issubdtype(t.dtype, np.number) \
         else pd.to_datetime(t, utc=True)
     df.columns = [c.lower() for c in df.columns]
     df = df.rename(columns={"min": "low", "max": "high"})
-    return df[COLS].astype(float).sort_index()
+    df = df[COLS].astype(float).sort_index()
+    return df[~df.index.duplicated(keep="last")]
 
 
 def save_csv(df: pd.DataFrame, path: str):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     out = df.copy()
-    out.insert(0, "time", (out.index.astype("int64") // 10**9).astype(int))
+    epoch = pd.Timestamp("1970-01-01", tz="UTC")
+    out.insert(0, "time", ((out.index - epoch) // pd.Timedelta(seconds=1)).astype("int64"))
     out.to_csv(path, index=False)
 
 

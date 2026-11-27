@@ -47,3 +47,12 @@ def test_finds_planted_edge_and_rejects_noise():
     assert noise["horizons"][1]["threshold"] is None
     sig = generate(data.synthetic(9000, edge=0.0, seed=9), noise)
     assert sig["signals"]["1m"]["action"] == "NO TRADE"
+
+
+def test_csv_roundtrip_keeps_real_times(tmp_path):
+    df = data.synthetic(300, seed=1)
+    path = tmp_path / "c.csv"
+    data.save_csv(df, path)
+    back = data.load_csv(path)
+    assert back.index.equals(df.index.as_unit(back.index.unit))
+    assert back.index[0].year == 2026
