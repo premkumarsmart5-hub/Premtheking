@@ -24,13 +24,28 @@ If any check fails, the agent shows **NO TRADE**. Seeing NO TRADE often is norma
 
 ## Setup (Termux on Android)
 
+Type the commands **one line at a time** and press Enter after each one. Do not paste the whole block at once.
+
 ```bash
-pkg update && pkg install python git
-pkg install tur-repo && pkg install python-numpy python-pandas python-scikit-learn
-git clone <your-new-repo-url> otc-signal-agent && cd otc-signal-agent
-pip install joblib -r requirements-iq.txt
-cp .env.example .env && nano .env     # your IQ Option email + password, stays on your phone
+pkg update
+pkg install python git tur-repo
+pkg install python-numpy python-pandas
+pip install -r requirements-iq.txt
 ```
+
+The repo is private, so `git clone` asks for a username and password:
+- **Username:** `premkumarsmart5-hub`
+- **Password:** a GitHub *token*, not your GitHub password. Create one in GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token. Set Repository access to *Only select repositories* → `premtheking`, and set Permissions → Contents to *Read-only*.
+
+```bash
+git clone https://github.com/premkumarsmart5-hub/premtheking
+cd premtheking
+cp .env.example .env
+nano .env        # your IQ Option email + password, stays on your phone
+```
+
+Only numpy and pandas are needed, and the AI models are written in plain numpy, so scikit-learn is not required.
+To update later, run `git pull` inside the `premtheking` folder.
 
 On a PC or VPS: `pip install -r requirements.txt -r requirements-iq.txt`
 

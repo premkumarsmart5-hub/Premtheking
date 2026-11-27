@@ -2,5 +2,5 @@
 __pycache__/
 .pytest_cache/
 data/*.csv
-models/*.joblib
+models/*.pkl
 signals_log.jsonl

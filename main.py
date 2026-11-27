@@ -16,7 +16,7 @@ from otcagent.signals import format_signal, generate, load_bundle, run_live, sav
 
 def paths(asset):
     safe = asset.replace("/", "_")
-    return Path("data") / f"{safe}_1m.csv", Path("models") / f"{safe}.joblib"
+    return Path("data") / f"{safe}_1m.csv", Path("models") / f"{safe}.pkl"
 
 
 def cmd_collect(a):

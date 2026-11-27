@@ -2,7 +2,7 @@
 import time
 from datetime import datetime, timezone
 
-import joblib
+import pickle
 import numpy as np
 
 from .features import WARMUP, build_features
@@ -11,11 +11,13 @@ from . import indicators as ind
 
 
 def load_bundle(path):
-    return joblib.load(path)
+    with open(path, "rb") as fh:
+        return pickle.load(fh)
 
 
 def save_bundle(bundle, path):
-    joblib.dump(bundle, path)
+    with open(path, "wb") as fh:
+        pickle.dump(bundle, fh)
 
 
 def indicator_confluence(df) -> dict:
