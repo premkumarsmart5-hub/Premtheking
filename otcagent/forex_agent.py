@@ -114,31 +114,60 @@ def train_forex(frames: dict, tf: int = 1, horizons=(1, 2, 3, 5), payout: float 
         log(show[["threshold", "trades", "win_rate", "wilson_low"]]
             .to_string(index=False, float_format=lambda v: f"{v:.3f}"))
         thr, exam = None, None
-        if not best:
-            log(f"NOT TRADABLE: nothing beat break-even ({be:.2%}) with 95% confidence.")
+        # per-pair thresholds: one shared AI, but each pair must prove itself separately
+        pdev = P[dev].to_numpy()[sel]
+        pair_best = {}
+        for name in names:
+            mk = pdev == name
+            if mk.sum() < 500:
+                continue
+            tb = evaluate_thresholds(pd.Series(pv[mk]), pd.Series(yv[mk]), payout, min_trades=100)
+            bp = choose_threshold(tb)
+            if bp:
+                pair_best[name] = bp
+        pair_thr = {}
+        if not best and not pair_best:
+            log(f"NOT TRADABLE: nothing beat break-even ({be:.2%}) with 95% confidence, "
+                "for all pairs together or for any single pair.")
         else:
             m = _fit(Xd[yd.notna().to_numpy()], yd[yd.notna()], max_rows)
             ph = m.predict_proba(X[hold])
             yh = y[hold].to_numpy()
-            n, w = trade_stats(ph, yh, best["threshold"])
-            wr = w / n if n else 0.0
-            exam = {"trades": n, "win_rate": wr, "wilson_low": wilson_lower(w, n)}
-            log(f"Walk-forward pick: confidence >= {best['threshold']:.2f} "
-                f"({best['win_rate']:.2%} over {int(best['trades'])} trades)")
-            log(f"FINAL EXAM (newest 20%): {wr:.2%} over {n} trades")
-            log("  by pair:    " + ", ".join(f"{k} {v:.0%}/{n_}" for k, n_, v in
-                                            breakdown(ph, yh, P[hold].to_numpy(), best["threshold"]) if n_))
-            log("  by session: " + ", ".join(f"{k} {v:.0%}/{n_}" for k, n_, v in
-                                            breakdown(ph, yh, session[hold], best["threshold"]) if n_))
-            log("  by regime:  " + ", ".join(f"{k} {v:.0%}/{n_}" for k, n_, v in
-                                            breakdown(ph, yh, regime[hold], best["threshold"]) if n_))
-            if n >= 50 and wr > be:
-                thr = best["threshold"]
-                log(f"TRADABLE at confidence >= {thr:.2f}")
+            ph_pair = P[hold].to_numpy()
+            if best:
+                n, w = trade_stats(ph, yh, best["threshold"])
+                wr = w / n if n else 0.0
+                exam = {"trades": n, "win_rate": wr, "wilson_low": wilson_lower(w, n)}
+                log(f"All pairs: walk-forward pick confidence >= {best['threshold']:.2f} "
+                    f"({best['win_rate']:.2%} over {int(best['trades'])} trades)")
+                log(f"FINAL EXAM (newest 20%): {wr:.2%} over {n} trades")
+                log("  by pair:    " + ", ".join(f"{k} {v:.0%}/{n_}" for k, n_, v in
+                                                breakdown(ph, yh, ph_pair, best["threshold"]) if n_))
+                log("  by session: " + ", ".join(f"{k} {v:.0%}/{n_}" for k, n_, v in
+                                                breakdown(ph, yh, session[hold], best["threshold"]) if n_))
+                log("  by regime:  " + ", ".join(f"{k} {v:.0%}/{n_}" for k, n_, v in
+                                                breakdown(ph, yh, regime[hold], best["threshold"]) if n_))
+                if n >= 50 and wr > be:
+                    thr = best["threshold"]
+                    log(f"TRADABLE (all pairs) at confidence >= {thr:.2f}")
+                else:
+                    log(f"All pairs: failed the final exam (break-even {be:.2%}).")
             else:
-                log(f"NOT TRADABLE: failed the final exam (break-even {be:.2%}).")
+                log(f"All pairs together: no edge (break-even {be:.2%}).")
+            for name, bp in pair_best.items():
+                mk = ph_pair == name
+                n, w = trade_stats(ph[mk], yh[mk], bp["threshold"])
+                wr = w / n if n else 0.0
+                ok_ = n >= 30 and wr > be
+                log(f"  {name}: walk-forward {bp['win_rate']:.1%}/{int(bp['trades'])} at >= {bp['threshold']:.2f}"
+                    f" -> final exam {wr:.1%}/{n}  {'PASS' if ok_ else 'fail'}")
+                if ok_:
+                    pair_thr[name] = {"threshold": bp["threshold"], "win_rate": wr, "trades": n}
+            if pair_thr:
+                log(f"TRADABLE pairs: {', '.join(pair_thr)}")
         ok = y.notna().to_numpy()
         bundle["horizons"][h] = {"model": _fit(X[ok], y[ok], max_rows), "threshold": thr,
+                                 "pair_thresholds": pair_thr,
                                  "oos_accuracy": acc, "exam": exam,
                                  "oos_best": ({"win_rate": exam["win_rate"], "trades": exam["trades"]}
                                               if thr else None)}
@@ -184,16 +213,17 @@ def analyse(df: pd.DataFrame, bundle: dict, pair: str) -> dict:
         lean = "CALL" if p >= 0.5 else "PUT"
         conf = max(p, 1 - p)
         agree = all((v >= 0.5) == (p >= 0.5) for v in parts.values())
-        thr = e["threshold"]
+        pt = (e.get("pair_thresholds") or {}).get(pair)
+        thr = pt["threshold"] if pt else e["threshold"]
         if thr is None:
-            action, reason = "NO TRADE", "expiry failed the backtest"
+            action, reason = "NO TRADE", f"{pair} {h * tf}m failed the backtest"
         elif conf < thr:
             action, reason = "NO TRADE", f"confidence {conf:.0%} < {thr:.0%}"
         elif not agree:
             action, reason = "NO TRADE", "AI models disagree"
         else:
             action, reason = lean, "all checks passed"
-        ex = e.get("exam") or {}
+        ex = pt or e.get("exam") or {}
         out["signals"][f"{h * tf}m"] = {
             "action": action, "lean": lean, "confidence": round(conf, 4), "required": thr,
             "reason": reason, "models": {k: round(v, 3) for k, v in parts.items()},

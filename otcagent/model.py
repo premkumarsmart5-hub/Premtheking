@@ -80,13 +80,14 @@ class KNNModel:
         Q = self.sc.transform(X)
         k = min(self.k, len(self.X))
         out = np.empty(len(Q))
-        for s in range(0, len(Q), 500):
-            q = Q[s:s + 500]
+        step = max(16, int(4_000_000 / max(1, len(self.X))))  # keep memory ~32 MB per block
+        for s in range(0, len(Q), step):
+            q = Q[s:s + step]
             d2 = (q ** 2).sum(axis=1)[:, None] + self.sq[None, :] - 2 * q @ self.X.T
             idx = np.argpartition(d2, k - 1, axis=1)[:, :k]
             d = np.sqrt(np.maximum(np.take_along_axis(d2, idx, axis=1), 0)) + 1e-9
             w = 1.0 / d
-            out[s:s + 500] = (w * self.y[idx]).sum(axis=1) / w.sum(axis=1)
+            out[s:s + step] = (w * self.y[idx]).sum(axis=1) / w.sum(axis=1)
         return out
 
 

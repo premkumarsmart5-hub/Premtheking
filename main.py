@@ -287,7 +287,10 @@ def cmd_forex(a):
     print("\n================ FOREX AGENT SUMMARY ================")
     for h, e in bundle["horizons"].items():
         ex = e.get("exam") or {}
-        verdict = f"TRADE at conf >= {e['threshold']:.2f}" if e["threshold"] else "NO TRADE"
+        verdict = f"TRADE all pairs at conf >= {e['threshold']:.2f}" if e["threshold"] else "NO TRADE (all pairs)"
+        if e.get("pair_thresholds"):
+            verdict += " | pairs that passed: " + ", ".join(
+                f"{k} >= {v['threshold']:.2f} ({v['win_rate']:.0%}/{v['trades']})" for k, v in e["pair_thresholds"].items())
         extra = f", exam {ex['win_rate']:.1%} over {ex['trades']}" if ex else ""
         print(f"  {h * a.tf:>3}m: {verdict}  (walk-forward accuracy {e['oos_accuracy']:.1%}{extra})")
     print(f"Break-even at {a.payout:.0%} payout: {1 / (1 + a.payout):.2%}. Model: {forex_model_path(a.tf)}")
