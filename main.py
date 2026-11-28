@@ -144,6 +144,8 @@ def cmd_train(a):
 
 
 def cmd_live(a):
+    if a.strategy:
+        return cmd_live_rule(a)
     _, model_path = paths(a.asset, a.tf)
     if not model_path.exists():
         raise SystemExit(f"No model {model_path}. Run first:  python main.py train --tf {a.tf} --asset {a.asset}")
@@ -165,6 +167,25 @@ def cmd_live(a):
 
     print(f"Live on {a.asset}. Signals appear 1 s after each {a.tf}-min candle closes. Ctrl+C to stop.")
     run_live(src, a.asset, bundle, on_signal)
+
+
+def cmd_live_rule(a):
+    from otcagent.signals import run_rule_live
+    from otcagent.strategies import STRATEGIES
+    if a.strategy not in STRATEGIES:
+        raise SystemExit(f"unknown strategy {a.strategy}. See: python main.py strategy --list")
+    fn, desc = STRATEGIES[a.strategy]
+    expiry = a.expiry or a.tf
+    src = data.IQOptionSource(account=a.account).connect()
+    log = Path("rule_signals_log.jsonl")
+
+    def on_signal(sig):
+        with log.open("a") as fh:
+            fh.write(json.dumps(sig) + "\n")
+
+    print(f"Live rule '{a.strategy}' on {a.asset}, {a.tf}-min candles, expiry {expiry} min.\n"
+          f"  {desc}\n  PRACTICE account only. Ctrl+C to stop. Signals are logged to {log}.")
+    run_rule_live(src, a.asset, fn, a.tf, expiry, on_signal)
 
 
 def cmd_strategy(a):
@@ -193,11 +214,24 @@ def cmd_strategy(a):
             print(f"skip {asset}: {e}")
     print(f"Testing {len(names)} strateg{'y' if len(names) == 1 else 'ies'} on {len(frames)} assets, "
           f"{a.tf}-min candles, break-even {1 / (1 + a.payout):.2%}")
+    import pandas as pd_
+    since = pd_.Timestamp(a.since, tz="UTC") if a.since else None
+    if since is not None:
+        print(f"Only trades from {since.date()} on are counted (signals still use earlier "
+              f"candles for context). This whole period is the exam.")
     rows = []
     for name in names:
         fn, desc = STRATEGIES[name]
         for asset, df in frames.items():
-            for r_ in test_strategy(df, fn(df), horizons, a.tf, a.payout):
+            sig = fn(df)
+            if since is not None:
+                keep = df.index >= since
+                if keep.sum() < 50:
+                    continue
+                df_t, sig_t, exam = df[keep], sig[keep], 1.0
+            else:
+                df_t, sig_t, exam = df, sig, 0.2
+            for r_ in test_strategy(df_t, sig_t, horizons, a.tf, a.payout, exam_frac=exam):
                 rows.append({"strategy": name, "asset": asset, **r_})
     res = pd.DataFrame(rows)
     res.to_csv(f"strategy_results_{a.tf}m.csv", index=False)
@@ -247,6 +281,8 @@ def main():
     lv.add_argument("--dashboard", action="store_true")
     lv.add_argument("--host", default="127.0.0.1")
     lv.add_argument("--port", type=int, default=8080)
+    lv.add_argument("--strategy", help="run a rule from 'strategy --list' instead of the AI model")
+    lv.add_argument("--expiry", type=int, help="expiry in minutes to show with rule signals")
     sc = sub.add_parser("scan", help="collect + test many OTC assets, list the ones with an edge")
     sc.add_argument("--market", choices=["otc", "real"], default="otc",
                     help="otc = broker OTC pairs (default), real = real forex pairs (Mon-Fri)")
@@ -268,6 +304,7 @@ def main():
     st.add_argument("--tf", type=int, choices=[1, 5], default=1)
     st.add_argument("--expiries", help="minutes, default 1,2,3,5 (--tf 1) or 5,10,15 (--tf 5)")
     st.add_argument("--payout", type=float, default=0.85)
+    st.add_argument("--since", help="only count trades from this date (YYYY-MM-DD), e.g. new data")
     d = sub.add_parser("demo")
     d.add_argument("--rows", type=int, default=15000)
     d.add_argument("--payout", type=float, default=0.85)

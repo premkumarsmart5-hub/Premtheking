@@ -114,3 +114,31 @@ def run_live(source, asset, bundle, on_signal=print, lookback=400):
             on_signal(generate(df, bundle, asset))
         except Exception as e:  # keep running through network hiccups
             print(f"live error: {e}")
+
+
+def run_rule_live(source, asset, rule_fn, tf, expiry, on_signal, lookback=400):
+    """Live signals from a rule-based strategy (see strategies.py)."""
+    sec = 60 * tf
+    while True:
+        time.sleep(sec - (time.time() % sec) + 1.0)
+        try:
+            df = source.candles(asset, lookback, size=sec)
+            if len(df) and df.index[-1].timestamp() > time.time() - sec:
+                df = df.iloc[:-1]
+            if not len(df) or df.index[-1].timestamp() < time.time() - 3 * sec:
+                print(f"{asset}: market closed / no fresh candles - no signals", flush=True)
+                continue
+            s = int(rule_fn(df).iloc[-1])
+            stamp = df.index[-1]
+            price = float(df["close"].iloc[-1])
+            if s == 0:
+                print(f"[{stamp}] {asset} @ {price:.5f}  · no signal", flush=True)
+                continue
+            action = "CALL" if s > 0 else "PUT"
+            arrow = "▲" if s > 0 else "▼"
+            print(f"[{stamp}] {asset} @ {price:.5f}  {arrow} {action}  expiry {expiry} min", flush=True)
+            on_signal({"asset": asset, "candle_time": str(stamp), "price": price,
+                       "action": action, "expiry_min": expiry,
+                       "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+        except Exception as e:  # keep running through network hiccups
+            print(f"live error: {e}", flush=True)

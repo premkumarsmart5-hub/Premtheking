@@ -88,6 +88,9 @@ python main.py strategy --name ema_cross --assets EURUSD-OTC,GBPUSD-OTC
 `breakout_channel`, `breakout_channel_50`, `breakout_level` and `breakout_level_50` are the **breakout** idea: a channel, or a flat support/resistance level touched 2+ times, then a candle **closes** outside it. A close above is a CALL and a close below is a PUT.
 `fade_channel`, `fade_channel_50`, `fade_level` and `fade_level_50` trade the opposite way, betting on a false breakout.
 
+**Testing on new data only:** `--since 2026-12-05` counts only trades from that date on. Download fresh candles first (`collect`), then test a rule that passed earlier on candles it has never seen.
+**Live rule signals:** `python main.py live --strategy fade_level --asset EURGBP --expiry 2` prints CALL/PUT the moment the rule fires. Signals are logged to `rule_signals_log.jsonl`. Use the PRACTICE account.
+
 It uses candles already downloaded by `collect`/`scan`, so no internet is needed and results take seconds.
 A rule PASSES only if its win rate beats break-even with 95% confidence and also on the newest 20% of candles.
 New rules go in `otcagent/strategies.py`: write a function that returns +1 (CALL), -1 (PUT) or 0 for each candle, then add it to `STRATEGIES`.
