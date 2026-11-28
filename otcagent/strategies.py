@@ -98,7 +98,8 @@ def all_patterns_vote(df):
     return _sig(score >= 2, score <= -2)
 
 
-def channel_bounce(df, window=30, direction="up", touch_tol=0.15, min_touches=2):
+def channel_bounce(df, window=30, direction="up", touch_tol=0.15, min_touches=2,
+                   mode="bounce"):
     """Trend-channel bounce (your drawing).
 
     The channel is built from the `window` candles BEFORE candle t:
@@ -109,6 +110,12 @@ def channel_bounce(df, window=30, direction="up", touch_tol=0.15, min_touches=2)
       * direction: "up" = only rising channels (as drawn), "down" = falling, "any"
     Candle t reaches the top zone of the channel (within touch_tol of the upper line)
     and closes red, still inside -> PUT. Reaches the bottom zone and closes green -> CALL.
+
+    mode="breakout": candle t CLOSES above the upper line -> CALL, closes below the
+    lower line -> PUT (trade in the direction of the break).
+    direction="flat": horizontal support/resistance levels (slope forced to 0); for a
+    breakout only the side being broken needs the touches (e.g. a flat top with
+    rising lows below it, as in an ascending triangle).
     """
     from numpy.lib.stride_tricks import sliding_window_view as win
     n = len(df)
@@ -129,6 +136,8 @@ def channel_bounce(df, window=30, direction="up", touch_tol=0.15, min_touches=2)
     x = np.arange(window, dtype=float)
     xm = x.mean()
     slope = ((Wc - Wc.mean(1, keepdims=True)) * (x - xm)).sum(1) / ((x - xm) ** 2).sum()
+    if direction == "flat":
+        slope = np.zeros_like(slope)
     icpt = Wc.mean(1) - slope * xm
     line = icpt[:, None] + slope[:, None] * x
     up_off = (Wh - line).max(1)
@@ -136,7 +145,9 @@ def channel_bounce(df, window=30, direction="up", touch_tol=0.15, min_touches=2)
     width = up_off - lo_off
     near_up = Wsh & ((Wh - line) >= (up_off - touch_tol * width)[:, None])
     near_lo = Wsl & ((Wl - line) <= (lo_off + touch_tol * width)[:, None])
-    valid = (near_up.sum(1) >= min_touches) & (near_lo.sum(1) >= min_touches) & (width > 0)
+    ok_up = near_up.sum(1) >= min_touches
+    ok_lo = near_lo.sum(1) >= min_touches
+    valid = ok_up & ok_lo & (width > 0)
     # slope must be meaningful: channel rises/falls by >= 25% of its width over the window
     rise = slope * window / np.where(width > 0, width, np.nan)
     if direction == "up":
@@ -146,6 +157,15 @@ def channel_bounce(df, window=30, direction="up", touch_tol=0.15, min_touches=2)
     proj = icpt + slope * window  # trend line projected to candle t
     U, L = proj + up_off, proj + lo_off
     t = np.arange(window, n)
+    if mode == "breakout":
+        if direction == "flat":  # each side only needs its own touches
+            call = ok_up & (width > 0) & (cl[t] > U)
+            put = ok_lo & (width > 0) & (cl[t] < L)
+        else:
+            call = valid & (cl[t] > U)
+            put = valid & (cl[t] < L)
+        sig[t] = np.where(call & ~put, 1, np.where(put & ~call, -1, 0))
+        return pd.Series(sig, index=df.index)
     op = df["open"].to_numpy(float)
     band = touch_tol * width
     # reaches the line zone and shows rejection: red candle at the top, green at the bottom
@@ -172,6 +192,14 @@ STRATEGIES = {
                       "YOUR IDEA, longer channel (50 candles)"),
     "channel_any": (lambda df: channel_bounce(df, 30, "any"),
                     "YOUR IDEA on rising, falling or flat channels (30 candles)"),
+    "breakout_channel": (lambda df: channel_bounce(df, 30, "any", mode="breakout"),
+                         "YOUR IDEA 2: close above channel = CALL, below = PUT (30 candles)"),
+    "breakout_channel_50": (lambda df: channel_bounce(df, 50, "any", mode="breakout"),
+                            "YOUR IDEA 2, longer channel (50 candles)"),
+    "breakout_level": (lambda df: channel_bounce(df, 30, "flat", mode="breakout"),
+                       "YOUR IDEA 2: break of flat resistance (2+ touches) = CALL, support = PUT"),
+    "breakout_level_50": (lambda df: channel_bounce(df, 50, "flat", mode="breakout"),
+                          "YOUR IDEA 2, flat levels over 50 candles"),
 }
 
 

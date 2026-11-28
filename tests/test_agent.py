@@ -94,3 +94,23 @@ def test_channel_bounce_no_lookahead_and_finds_channel():
                        "close": c}, index=pd.date_range("2026-01-01", periods=n, freq="1min", tz="UTC"))
     r = test_strategy(ch, channel_bounce(ch, 30, "up"), (2,), 1, 0.85)[0]
     assert r["pass"] and r["win_rate"] > 0.7
+
+
+def test_breakout_finds_planted_breakouts():
+    import pandas as pd
+    from otcagent.strategies import STRATEGIES, test_strategy
+    rng = np.random.default_rng(2)
+    c = [1.1]
+    while len(c) < 8000:
+        base = c[-1]
+        c += [base + np.sin(k / 1.5) * 2e-4 + rng.normal(0, 2e-5) for k in range(40)]
+        d = rng.choice([-1, 1])
+        for _ in range(15):
+            c.append(c[-1] + d * 1e-4 + rng.normal(0, 2e-5))
+    c = np.array(c[:8000])
+    o = np.r_[c[0], c[:-1]]
+    bk = pd.DataFrame({"open": o, "high": np.maximum(o, c) + 1e-5, "low": np.minimum(o, c) - 1e-5,
+                       "close": c}, index=pd.date_range("2026-01-01", periods=8000, freq="1min", tz="UTC"))
+    fn = STRATEGIES["breakout_channel"][0]
+    assert test_strategy(bk, fn(bk), (2,), 1, 0.85)[0]["pass"]
+    assert (fn(bk).iloc[:5000].values == fn(bk.iloc[:5000]).values).all()

@@ -85,6 +85,8 @@ python main.py strategy --name ema_cross --assets EURUSD-OTC,GBPUSD-OTC
 
 `channel_up`, `channel_up_50` and `channel_any` are the **channel bounce** idea: price zig-zags inside a trend channel, PUT at the upper line and CALL at the lower line. The channel is built only from earlier candles. It needs 2+ swing touches on each side, and a signal needs a rejection candle (red at the top, green at the bottom).
 
+`breakout_channel`, `breakout_channel_50`, `breakout_level` and `breakout_level_50` are the **breakout** idea: a channel, or a flat support/resistance level touched 2+ times, then a candle **closes** outside it. A close above is a CALL and a close below is a PUT.
+
 It uses candles already downloaded by `collect`/`scan`, so no internet is needed and results take seconds.
 A rule PASSES only if its win rate beats break-even with 95% confidence and also on the newest 20% of candles.
 New rules go in `otcagent/strategies.py`: write a function that returns +1 (CALL), -1 (PUT) or 0 for each candle, then add it to `STRATEGIES`.
