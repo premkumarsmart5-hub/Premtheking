@@ -111,6 +111,16 @@ python main.py forex-live --asset EURUSD --tf 1 --dashboard   # live analysis re
 
 Leave out `--download` to reuse candles you already have. The live report shows the session, regime, higher-TF trend, the patterns found, which indicators are bullish or bearish, and the verdict for each expiry. A verdict is CALL or PUT only when that expiry passed the backtest, the confidence is high enough, and all 3 AI models agree.
 
+**Live signals for your demo account.** Every CALL/PUT is **scored automatically** when it expires. You see `✔ WIN` / `✘ LOSS` and a running score (wins, losses, win %, profit in stakes), so you can compare it with your demo results. Results go to `results_log.jsonl`. The terminal beeps on each signal.
+
+```bash
+python main.py live --strategy fade_level --asset EURGBP --expiry 2 --dashboard   # a rule
+python main.py forex-live --asset EURGBP --tf 1 --dashboard                      # the AI agent
+python main.py forex-live --asset EURGBP --tf 1 --show-all                       # + paper-track the AI's lean
+```
+
+`--show-all` also shows the AI's lean whenever its confidence is 55%+, even for expiries that did not pass the backtest. These are marked **(unverified)** and scored separately. Use it to see for yourself how the raw AI does live.
+
 **Rule-based setups** (tested with `strategy`): `trend_pullback` (higher-TF trend + ADX + RSI turn + pattern), `range_reversal` (ADX < 20 range + Bollinger/RSI extreme + reversal pattern), `committee_5` / `committee_7` (5+ / 7+ of the 19 setups agree).
 
 ## Test your own strategy idea

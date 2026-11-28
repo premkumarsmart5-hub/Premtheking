@@ -116,8 +116,9 @@ def run_live(source, asset, bundle, on_signal=print, lookback=400):
             print(f"live error: {e}")
 
 
-def run_rule_live(source, asset, rule_fn, tf, expiry, on_signal, lookback=400):
-    """Live signals from a rule-based strategy (see strategies.py)."""
+def run_rule_live(source, asset, rule_fn, tf, expiry, on_signal, lookback=400,
+                  tracker=None, tag="rule", publish=None):
+    """Live signals from a rule-based strategy (see strategies.py), auto-scored."""
     sec = 60 * tf
     while True:
         time.sleep(sec - (time.time() % sec) + 1.0)
@@ -128,17 +129,31 @@ def run_rule_live(source, asset, rule_fn, tf, expiry, on_signal, lookback=400):
             if not len(df) or df.index[-1].timestamp() < time.time() - 3 * sec:
                 print(f"{asset}: market closed / no fresh candles - no signals", flush=True)
                 continue
+            if tracker:
+                for line in tracker.update(df, asset):
+                    print(line, flush=True)
             s = int(rule_fn(df).iloc[-1])
             stamp = df.index[-1]
             price = float(df["close"].iloc[-1])
+            action = "CALL" if s > 0 else "PUT" if s < 0 else "NO TRADE"
+            if publish:
+                publish({"asset": asset, "candle_time": str(stamp), "price": price, "breakeven": 0.5556,
+                         "patterns": [], "indicators": {"strategy": tag},
+                         "scoreboard": tracker.board() if tracker else {},
+                         "signals": {f"{expiry}m": {"action": action, "lean": action, "confidence": 1.0 if s else 0.0,
+                                                     "reason": "rule fired" if s else "waiting for setup",
+                                                     "backtest_win_rate": None, "backtest_trades": 0}}})
             if s == 0:
                 print(f"[{stamp}] {asset} @ {price:.5f}  · no signal", flush=True)
                 continue
-            action = "CALL" if s > 0 else "PUT"
             arrow = "▲" if s > 0 else "▼"
-            print(f"[{stamp}] {asset} @ {price:.5f}  {arrow} {action}  expiry {expiry} min", flush=True)
+            print(f"\a[{stamp}] {asset} @ {price:.5f}  {arrow} {action}  expiry {expiry} min"
+                  f"   <- place it on your DEMO now", flush=True)
+            if tracker:
+                tracker.add(tag, asset, stamp, price, action, expiry)
             on_signal({"asset": asset, "candle_time": str(stamp), "price": price,
                        "action": action, "expiry_min": expiry,
                        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
         except Exception as e:  # keep running through network hiccups
             print(f"live error: {e}", flush=True)
+

@@ -22,7 +22,7 @@ h1{font-size:18px;margin:0 0 4px}.sub{color:#9aa;font-size:13px;margin-bottom:14
 .warn{color:#f59e0b;font-size:12px;margin-top:14px}
 </style></head><body>
 <h1 id=t>OTC Signal Agent</h1><div class=sub id=s>waiting for the next candle…</div>
-<div class=grid id=g></div><div class=box id=p></div><div class=box id=i></div>
+<div class=grid id=g></div><div class=box id=sb></div><div class=box id=p></div><div class=box id=i></div>
 <div class=warn>Signals are probabilities, not guarantees. Practice account first.</div>
 <script>
 async function tick(){try{const r=await fetch('/api/latest');const d=await r.json();if(!d)return;
@@ -35,6 +35,8 @@ h+=`<div class=card><div class=exp>${k} expiry</div><div class="act ${c}">${v.ac
 document.getElementById('g').innerHTML=h;
 document.getElementById('p').textContent='Patterns: '+(d.patterns.join(', ')||'none');
 document.getElementById('i').textContent=Object.entries(d.indicators).map(([k,v])=>k+': '+v).join(' · ');
+const sb=d.scoreboard||{};document.getElementById('sb').textContent=Object.keys(sb).length?
+'Live score: '+Object.entries(sb).map(([k,v])=>k+' '+v).join(' | '):'Live score: no finished signals yet';
 }catch(e){}}
 tick();setInterval(tick,3000);
 </script></body></html>"""

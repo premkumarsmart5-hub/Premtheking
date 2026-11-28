@@ -178,16 +178,26 @@ def cmd_live_rule(a):
         raise SystemExit(f"unknown strategy {a.strategy}. See: python main.py strategy --list")
     fn, desc = STRATEGIES[a.strategy]
     expiry = a.expiry or a.tf
+    from otcagent.tracker import Tracker
     src = data.IQOptionSource(account=a.account).connect()
     log = Path("rule_signals_log.jsonl")
+    tracker = Tracker(a.tf, "results_log.jsonl", a.payout)
+    publish = None
+    if a.dashboard:
+        from otcagent import dashboard
+        dashboard.serve(a.host, a.port)
+        publish = dashboard.publish
 
     def on_signal(sig):
         with log.open("a") as fh:
             fh.write(json.dumps(sig) + "\n")
 
     print(f"Live rule '{a.strategy}' on {a.asset}, {a.tf}-min candles, expiry {expiry} min.\n"
-          f"  {desc}\n  PRACTICE account only. Ctrl+C to stop. Signals are logged to {log}.")
-    run_rule_live(src, a.asset, fn, a.tf, expiry, on_signal)
+          f"  {desc}\n  PRACTICE account only. Ctrl+C to stop.\n"
+          f"  Each signal is scored automatically at expiry (WIN/LOSS + running score); "
+          f"results go to results_log.jsonl")
+    run_rule_live(src, a.asset, fn, a.tf, expiry, on_signal, tracker=tracker,
+                  tag=f"{a.strategy} {expiry}m", publish=publish)
 
 
 def cmd_strategy(a):
@@ -312,10 +322,16 @@ def cmd_forex_live(a):
         from otcagent import dashboard
         dashboard.serve(a.host, a.port)
         publish = dashboard.publish
+    from otcagent.tracker import Tracker
+    tracker = Tracker(a.tf, "results_log.jsonl", bundle["payout"])
     sec = 60 * a.tf
     lookback = 3000 if a.tf == 1 else 2000
     log = Path("forex_signals_log.jsonl")
     print(f"Forex agent live on {a.asset}, {a.tf}-min candles. Ctrl+C to stop.")
+    if a.show_all:
+        print(f"  --show-all: the AI's lean is also shown as a PAPER signal whenever its confidence "
+              f">= {a.show_all:.2f}, even if that expiry did not pass the backtest. These are marked "
+              "'(unverified)' and scored separately.")
     while True:
         _t.sleep(sec - (_t.time() % sec) + 1.0)
         try:
@@ -325,8 +341,23 @@ def cmd_forex_live(a):
             if not len(df) or df.index[-1].timestamp() < _t.time() - 3 * sec:
                 print(f"{a.asset}: market closed / no fresh candles - no signals", flush=True)
                 continue
+            for line in tracker.update(df, a.asset):
+                print(line, flush=True)
             res = analyse(df, bundle, a.asset)
+            stamp, price = df.index[-1], float(df["close"].iloc[-1])
+            extra = []
+            for k, sg in res["signals"].items():
+                mins = int(k[:-1])
+                if sg["action"] in ("CALL", "PUT"):
+                    tracker.add(f"AI {k}", a.asset, stamp, price, sg["action"], mins)
+                    extra.append(f"\a  >>> {sg['action']} {k} on your DEMO now")
+                elif a.show_all and sg["confidence"] >= a.show_all:
+                    tracker.add(f"AI {k} (unverified)", a.asset, stamp, price, sg["lean"], mins)
+                    extra.append(f"  paper: {sg['lean']} {k} (unverified, conf {sg['confidence']:.0%})")
+            res["scoreboard"] = tracker.board()
             print(format_analysis(res), flush=True)
+            for line in extra:
+                print(line, flush=True)
             with log.open("a") as fh:
                 fh.write(json.dumps(res) + "\n")
             if publish:
@@ -365,6 +396,7 @@ def main():
     lv.add_argument("--port", type=int, default=8080)
     lv.add_argument("--strategy", help="run a rule from 'strategy --list' instead of the AI model")
     lv.add_argument("--expiry", type=int, help="expiry in minutes to show with rule signals")
+    lv.add_argument("--payout", type=float, default=0.80, help="for the live score in stakes")
     sc = sub.add_parser("scan", help="collect + test many OTC assets, list the ones with an edge")
     sc.add_argument("--market", choices=["otc", "real"], default="otc",
                     help="otc = broker OTC pairs (default), real = real forex pairs (Mon-Fri)")
@@ -404,6 +436,8 @@ def main():
     fl.add_argument("--dashboard", action="store_true")
     fl.add_argument("--host", default="127.0.0.1")
     fl.add_argument("--port", type=int, default=8080)
+    fl.add_argument("--show-all", type=float, nargs="?", const=0.55, default=None,
+                    help="also paper-track the AI lean when confidence >= this (default 0.55)")
     d = sub.add_parser("demo")
     d.add_argument("--rows", type=int, default=15000)
     d.add_argument("--payout", type=float, default=0.85)

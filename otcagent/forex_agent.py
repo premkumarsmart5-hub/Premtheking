@@ -218,7 +218,7 @@ def analyse(df: pd.DataFrame, bundle: dict, pair: str) -> dict:
         if thr is None:
             action, reason = "NO TRADE", f"{pair} {h * tf}m failed the backtest"
         elif conf < thr:
-            action, reason = "NO TRADE", f"confidence {conf:.0%} < {thr:.0%}"
+            action, reason = "NO TRADE", f"confidence {conf:.1%} < {thr:.0%}"
         elif not agree:
             action, reason = "NO TRADE", "AI models disagree"
         else:
