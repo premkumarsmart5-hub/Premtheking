@@ -200,6 +200,15 @@ STRATEGIES = {
                        "YOUR IDEA 2: break of flat resistance (2+ touches) = CALL, support = PUT"),
     "breakout_level_50": (lambda df: channel_bounce(df, 50, "flat", mode="breakout"),
                           "YOUR IDEA 2, flat levels over 50 candles"),
+    # Fade = trade AGAINST the break (bet on a false breakout / fakeout).
+    "fade_channel": (lambda df: -channel_bounce(df, 30, "any", mode="breakout"),
+                     "FADE: close above channel = PUT, below = CALL (30 candles)"),
+    "fade_channel_50": (lambda df: -channel_bounce(df, 50, "any", mode="breakout"),
+                        "FADE, channel over 50 candles"),
+    "fade_level": (lambda df: -channel_bounce(df, 30, "flat", mode="breakout"),
+                   "FADE: break above flat resistance = PUT, below support = CALL"),
+    "fade_level_50": (lambda df: -channel_bounce(df, 50, "flat", mode="breakout"),
+                      "FADE, flat levels over 50 candles"),
 }
 
 
