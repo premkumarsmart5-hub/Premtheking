@@ -340,6 +340,9 @@ def cmd_forex_live(a):
                 df = df.iloc[:-1]
             if not len(df) or df.index[-1].timestamp() < _t.time() - 3 * sec:
                 print(f"{a.asset}: market closed / no fresh candles - no signals", flush=True)
+                if publish:
+                    from otcagent.signals import market_closed_text
+                    publish({"status": market_closed_text(a.asset)})
                 continue
             for line in tracker.update(df, a.asset):
                 print(line, flush=True)

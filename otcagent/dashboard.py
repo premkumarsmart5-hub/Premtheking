@@ -11,7 +11,7 @@ LOCK = threading.Lock()
 
 PAGE = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>OTC Signal Agent</title><style>
+<title>Forex Signal Agent</title><style>
 body{font-family:system-ui,sans-serif;background:#0f1115;color:#e8e8e8;margin:0;padding:16px}
 h1{font-size:18px;margin:0 0 4px}.sub{color:#9aa;font-size:13px;margin-bottom:14px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
@@ -21,11 +21,12 @@ h1{font-size:18px;margin:0 0 4px}.sub{color:#9aa;font-size:13px;margin-bottom:14
 .box{background:#1a1d24;border-radius:12px;padding:12px;margin-top:12px;font-size:13px}
 .warn{color:#f59e0b;font-size:12px;margin-top:14px}
 </style></head><body>
-<h1 id=t>OTC Signal Agent</h1><div class=sub id=s>waiting for the next candle…</div>
+<h1 id=t>Forex Signal Agent</h1><div class=sub id=s>waiting for the next candle…</div>
 <div class=grid id=g></div><div class=box id=sb></div><div class=box id=p></div><div class=box id=i></div>
 <div class=warn>Signals are probabilities, not guarantees. Practice account first.</div>
 <script>
 async function tick(){try{const r=await fetch('/api/latest');const d=await r.json();if(!d)return;
+if(d.status){document.getElementById('s').textContent=d.status;if(!d.signals)return;}
 document.getElementById('t').textContent=d.asset+' @ '+d.price.toFixed(5);
 document.getElementById('s').textContent='candle '+d.candle_time+' · break-even '+(d.breakeven*100).toFixed(1)+'%';
 let h='';for(const[k,v]of Object.entries(d.signals)){const c=v.action==='NO TRADE'?'NO':v.action;

@@ -128,6 +128,8 @@ def run_rule_live(source, asset, rule_fn, tf, expiry, on_signal, lookback=400,
                 df = df.iloc[:-1]
             if not len(df) or df.index[-1].timestamp() < time.time() - 3 * sec:
                 print(f"{asset}: market closed / no fresh candles - no signals", flush=True)
+                if publish:
+                    publish({"status": market_closed_text(asset)})
                 continue
             if tracker:
                 for line in tracker.update(df, asset):
@@ -157,3 +159,10 @@ def run_rule_live(source, asset, rule_fn, tf, expiry, on_signal, lookback=400,
         except Exception as e:  # keep running through network hiccups
             print(f"live error: {e}", flush=True)
 
+
+
+def market_closed_text(asset):
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).strftime("%a %H:%M UTC")
+    return (f"{asset}: market closed (now {now}). Real forex reopens Sunday 22:00 UTC "
+            "= Monday 3:30 AM India time. Signals start automatically.")
