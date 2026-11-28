@@ -41,6 +41,8 @@ class IQOptionSource:
             from iqoptionapi.stable_api import IQ_Option
         except ImportError:
             raise SystemExit("Install the connector first: pip install -r requirements-iq.txt")
+        import logging
+        logging.getLogger().setLevel(logging.CRITICAL)  # silence the library's endless error spam
         self.api = IQ_Option(self.email, self.password)
         ok, reason = self.api.connect()
         if not ok:
@@ -107,7 +109,21 @@ class IQOptionSource:
                 break
         return to_frame(out)
 
+    def check_asset(self, asset: str):
+        """Fail fast for unknown / closed assets (the library would retry forever)."""
+        try:
+            from iqoptionapi.constants import ACTIVES
+            if asset not in ACTIVES:
+                raise ValueError(f"{asset} is not a known IQ Option asset name")
+        except ImportError:
+            pass
+        self._ensure()
+        probe = self._get_with_retry(asset, 5, time.time(), timeout=20, tries=2)
+        if not probe:
+            raise ValueError(f"{asset} returned no candles (closed right now?)")
+
     def history(self, asset: str, days: float = 7, log=print) -> pd.DataFrame:
+        self.check_asset(asset)
         total = int(days * 24 * 60)
         frames, end = [], time.time()
         got = 0
