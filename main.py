@@ -5,6 +5,7 @@
   python main.py live     --asset EURUSD-OTC --dashboard   # live CALL/PUT signals
   python main.py scan     --days 10                       # test 12 OTC pairs, list winners
   python main.py scan     --market real --days 14         # same for real forex pairs
+  python main.py scan     --tf 5                          # 5-min candles: 5/10/15 min expiries
   python main.py demo                                      # offline demo, no login needed
 """
 import argparse
@@ -16,9 +17,24 @@ from otcagent.backtest import train_and_validate
 from otcagent.signals import format_signal, generate, load_bundle, run_live, save_bundle
 
 
-def paths(asset):
+def paths(asset, tf=1):
     safe = asset.replace("/", "_")
-    return Path("data") / f"{safe}_1m.csv", Path("models") / f"{safe}.pkl"
+    return Path("data") / f"{safe}_{tf}m.csv", Path("models") / f"{safe}_{tf}m.pkl"
+
+
+def expiries_to_candles(a):
+    """--expiries is in minutes; turn it into a number of candles of size --tf."""
+    exp = a.expiries or ("1,2,3,5" if a.tf == 1 else "5,10,15")
+    out = []
+    for m in (int(x) for x in exp.split(",")):
+        if m % a.tf:
+            raise SystemExit(f"expiry {m} min is not a multiple of the {a.tf}-min candle")
+        out.append(m // a.tf)
+    return tuple(out)
+
+
+def default_days(a):
+    return a.days if a.days else (10 if a.tf == 1 else 60)
 
 
 REAL_SCAN = [  # real interbank forex: open Mon-Fri only
@@ -32,10 +48,10 @@ DEFAULT_SCAN = [
 ]
 
 
-def collect_asset(src, asset, days):
-    csv, _ = paths(asset)
-    print(f"Downloading {days} days of 1-minute {asset} candles…")
-    new = src.history(asset, days)
+def collect_asset(src, asset, days, tf=1):
+    csv, _ = paths(asset, tf)
+    print(f"Downloading {days} days of {tf}-minute {asset} candles…")
+    new = src.history(asset, days, size=60 * tf)
     if csv.exists():  # merge with what we already have, history keeps growing
         old = data.load_csv(csv)
         new = old.combine_first(new) if len(old) else new
@@ -46,16 +62,18 @@ def collect_asset(src, asset, days):
 
 def cmd_collect(a):
     src = data.IQOptionSource(account=a.account).connect()
-    collect_asset(src, a.asset, a.days)
+    collect_asset(src, a.asset, default_days(a), a.tf)
 
 
 def cmd_scan(a):
     assets = ([x.strip() for x in a.assets.split(",")] if a.assets
               else REAL_SCAN if a.market == "real" else DEFAULT_SCAN)
     src = None if a.no_download else data.IQOptionSource(account=a.account).connect()
-    horizons = tuple(int(h) for h in a.horizons.split(","))
+    horizons = expiries_to_candles(a)
+    days = default_days(a)
+    tf = a.tf
     import pandas as pd
-    out = Path("scan_results.csv")
+    out = Path(f"scan_results_{tf}m.csv")
     rows = []
     if a.resume and out.exists():
         rows = [r for r in pd.read_csv(out, dtype=str).fillna("-").to_dict("records")
@@ -71,24 +89,24 @@ def cmd_scan(a):
         print(f"\n##### [{i}/{len(assets)}] {asset} #####")
         try:
             if src:
-                df = collect_asset(src, asset, a.days)
+                df = collect_asset(src, asset, days, tf)
             else:
-                df = data.load_csv(paths(asset)[0])
-            if len(df) < 3000:
+                df = data.load_csv(paths(asset, tf)[0])
+            if len(df) < 2000:
                 raise ValueError(f"only {len(df)} candles - asset closed or unknown?")
             bundle = train_and_validate(df, payout=a.payout, horizons=horizons,
-                                        n_folds=a.folds, log=print if a.verbose else (lambda *_: None))
+                                        n_folds=a.folds, tf=tf, log=print if a.verbose else (lambda *_: None))
             bundle["asset"] = asset
             Path("models").mkdir(exist_ok=True)
-            save_bundle(bundle, paths(asset)[1])
+            save_bundle(bundle, paths(asset, tf)[1])
             for h, e in bundle["horizons"].items():
                 ho = e.get("holdout") or {}
-                rows.append({"asset": asset, "expiry": f"{h}m",
+                rows.append({"asset": asset, "expiry": f"{h * tf}m",
                              "accuracy": f"{e['oos_accuracy']:.1%}",
                              "exam_win": f"{ho['win_rate']:.1%}" if ho else "-",
                              "exam_trades": ho.get("trades", 0),
                              "verdict": f"TRADE >= {e['threshold']:.2f}" if e["threshold"] else "NO TRADE"})
-                print(f"  {h}m: {rows[-1]['verdict']} (accuracy {rows[-1]['accuracy']})", flush=True)
+                print(f"  {h * tf}m: {rows[-1]['verdict']} (accuracy {rows[-1]['accuracy']})", flush=True)
         except (Exception, SystemExit) as e:
             print(f"  skipped: {e}")
             rows.append({"asset": asset, "expiry": "-", "accuracy": "-", "exam_win": "-",
@@ -103,28 +121,31 @@ def cmd_scan(a):
     print(f"\n{len(good)} asset/expiry combination(s) passed both the walk-forward test "
           f"and the final exam (break-even {1 / (1 + a.payout):.2%}).")
     if len(good):
-        print("Next: forward-test one on PRACTICE:  python main.py live --asset <ASSET> --dashboard")
-    print("Saved to scan_results.csv")
+        print(f"Next: forward-test one on PRACTICE:  python main.py live --tf {tf} --asset <ASSET> --dashboard")
+    print(f"Saved to {out}")
 
 
 def cmd_train(a):
-    csv, model_path = paths(a.asset)
+    csv, model_path = paths(a.asset, a.tf)
     src_csv = Path(a.csv or csv)
     if not src_csv.exists():
-        raise SystemExit(f"No data file {src_csv}. Run first:  python main.py collect --asset {a.asset}")
+        raise SystemExit(f"No data file {src_csv}. Run first:  python main.py collect --tf {a.tf} --asset {a.asset}")
     df = data.load_csv(src_csv)
     print(f"Training on {len(df)} candles ({df.index[0]} → {df.index[-1]})")
-    bundle = train_and_validate(df, payout=a.payout, n_folds=a.folds, min_trades=a.min_trades)
+    bundle = train_and_validate(df, payout=a.payout, horizons=expiries_to_candles(a),
+                                n_folds=a.folds, min_trades=a.min_trades, tf=a.tf)
     bundle["asset"] = a.asset
     model_path.parent.mkdir(exist_ok=True)
     save_bundle(bundle, model_path)
-    summary = {f"{h}m": (f"TRADE at conf >= {e['threshold']:.2f}" if e["threshold"] else "NO TRADE")
+    summary = {f"{h * a.tf}m": (f"TRADE at conf >= {e['threshold']:.2f}" if e["threshold"] else "NO TRADE")
                for h, e in bundle["horizons"].items()}
     print(f"\nSaved model to {model_path}\nSummary: {json.dumps(summary)}")
 
 
 def cmd_live(a):
-    _, model_path = paths(a.asset)
+    _, model_path = paths(a.asset, a.tf)
+    if not model_path.exists():
+        raise SystemExit(f"No model {model_path}. Run first:  python main.py train --tf {a.tf} --asset {a.asset}")
     bundle = load_bundle(model_path)
     src = data.IQOptionSource(account=a.account).connect()
     publish = None
@@ -141,7 +162,7 @@ def cmd_live(a):
         if publish:
             publish(sig)
 
-    print(f"Live on {a.asset}. Signals appear 1 s after each minute closes. Ctrl+C to stop.")
+    print(f"Live on {a.asset}. Signals appear 1 s after each {a.tf}-min candle closes. Ctrl+C to stop.")
     run_live(src, a.asset, bundle, on_signal)
 
 
@@ -159,12 +180,16 @@ def main():
         s = sub.add_parser(name)
         s.add_argument("--asset", default="EURUSD-OTC")
         s.add_argument("--account", default="PRACTICE", choices=["PRACTICE", "REAL"])
-    sub.choices["collect"].add_argument("--days", type=float, default=7)
+        s.add_argument("--tf", type=int, choices=[1, 5], default=1,
+                       help="candle size in minutes: 1 (expiries 1/2/3/5) or 5 (expiries 5/10/15)")
+    sub.choices["collect"].add_argument("--days", type=float,
+                                        help="default 10 (1-min) or 60 (5-min candles)")
     t = sub.choices["train"]
     t.add_argument("--csv", help="train from a CSV instead of data/<asset>_1m.csv")
     t.add_argument("--payout", type=float, default=0.85, help="0.85 = 85%% payout")
     t.add_argument("--folds", type=int, default=5)
     t.add_argument("--min-trades", type=int, default=100)
+    t.add_argument("--expiries", help="minutes, default 1,2,3,5 (--tf 1) or 5,10,15 (--tf 5)")
     lv = sub.choices["live"]
     lv.add_argument("--dashboard", action="store_true")
     lv.add_argument("--host", default="127.0.0.1")
@@ -173,10 +198,12 @@ def main():
     sc.add_argument("--market", choices=["otc", "real"], default="otc",
                     help="otc = broker OTC pairs (default), real = real forex pairs (Mon-Fri)")
     sc.add_argument("--assets", help="comma list, default: 12 pairs of the chosen --market")
-    sc.add_argument("--days", type=float, default=10)
+    sc.add_argument("--tf", type=int, choices=[1, 5], default=1,
+                    help="candle size in minutes: 1 (expiries 1/2/3/5) or 5 (expiries 5/10/15)")
+    sc.add_argument("--days", type=float, help="default 10 (1-min) or 60 (5-min candles)")
     sc.add_argument("--payout", type=float, default=0.85)
     sc.add_argument("--folds", type=int, default=3)
-    sc.add_argument("--horizons", default="1,2,3,5")
+    sc.add_argument("--expiries", help="minutes, default 1,2,3,5 (--tf 1) or 5,10,15 (--tf 5)")
     sc.add_argument("--account", default="PRACTICE", choices=["PRACTICE", "REAL"])
     sc.add_argument("--no-download", action="store_true", help="use CSVs already in data/")
     sc.add_argument("--resume", action="store_true", help="skip assets already in scan_results.csv")

@@ -53,6 +53,7 @@ def generate(df, bundle, asset="") -> dict:
         "breakeven": bundle["breakeven"],
         "signals": {},
     }
+    tf = bundle.get("tf", 1)
     for h, entry in bundle["horizons"].items():
         model = entry["model"]
         parts = {k: float(v[0]) for k, v in model.predict_proba_parts(feats).items()}
@@ -70,7 +71,7 @@ def generate(df, bundle, asset="") -> dict:
         else:
             action, reason = direction, "all checks passed"
         best = entry.get("oos_best") or {}
-        out["signals"][f"{h}m"] = {
+        out["signals"][f"{h * tf}m"] = {
             "action": action,
             "lean": direction,
             "confidence": round(conf, 4),
@@ -94,17 +95,18 @@ def format_signal(s: dict) -> str:
 
 
 def run_live(source, asset, bundle, on_signal=print, lookback=400):
-    """Wait for each 1-minute candle to close, then emit signals."""
+    """Wait for each candle to close, then emit signals."""
+    sec = 60 * bundle.get("tf", 1) if bundle else 60
     while True:
         now = time.time()
-        wait = 60 - (now % 60) + 1.0  # 1 s after the minute boundary
+        wait = sec - (now % sec) + 1.0  # 1 s after the candle boundary
         time.sleep(wait)
         try:
-            df = source.candles(asset, lookback)
-            # drop the candle that is still forming (started this minute)
-            if len(df) and df.index[-1].timestamp() > time.time() - 60:
+            df = source.candles(asset, lookback, size=sec)
+            # drop the candle that is still forming
+            if len(df) and df.index[-1].timestamp() > time.time() - sec:
                 df = df.iloc[:-1]
-            if not len(df) or df.index[-1].timestamp() < time.time() - 180:
+            if not len(df) or df.index[-1].timestamp() < time.time() - 3 * sec:
                 last = df.index[-1] if len(df) else "never"
                 print(f"{asset}: market closed / no fresh candles (last {last}) - no signals",
                       flush=True)

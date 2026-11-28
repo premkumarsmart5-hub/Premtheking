@@ -58,7 +58,10 @@ python main.py train   --asset EURUSD-OTC --payout 0.85
 python main.py live    --asset EURUSD-OTC --dashboard # open http://127.0.0.1:8080
 python main.py scan    --days 10                      # test 12 OTC pairs, list any with an edge
 python main.py scan    --market real --days 14        # test 12 REAL forex pairs (EURUSD, GBPUSD…)
+python main.py scan    --tf 5                         # 5-minute candles: 5 / 10 / 15 min expiries
 ```
+
+**5 / 10 / 15 minute expiries:** add `--tf 5` to `collect`, `train`, `scan` and `live`. Signals then come at each 5-minute candle close. The expiry is 1, 2 or 3 candles later, which lines up with IQ Option's clock-based expiries. By default this downloads 60 days of history, because there are 5× fewer candles per day. Pick your own expiries with `--expiries 5,10,15,30`; each one must be a multiple of 5. Files for 1-min and 5-min candles are kept apart (`data/<asset>_1m.csv` and `data/<asset>_5m.csv`).
 
 **Real markets vs OTC:** real pairs (names without `-OTC`) come from actual interbank trading and are open Monday to Friday only. History can still be downloaded at the weekend. Trades are never scored across a weekend or holiday gap. In live mode, a closed market shows "market closed" instead of signals. IQ Option's payout on real pairs is often lower than on OTC, so pass the real number with `--payout`.
 

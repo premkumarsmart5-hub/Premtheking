@@ -29,9 +29,9 @@ def wilson_lower(wins: int, n: int, z: float = 1.96) -> float:
     return (centre - margin) / denom
 
 
-def dataset(df: pd.DataFrame, horizon: int, feats: pd.DataFrame = None):
+def dataset(df: pd.DataFrame, horizon: int, feats: pd.DataFrame = None, tf: int = 1):
     feats = build_features(df) if feats is None else feats
-    y = make_labels(df, horizon)
+    y = make_labels(df, horizon, tf)
     mask = y.notna()
     mask.iloc[:WARMUP] = False
     return feats[mask], y[mask]
@@ -98,21 +98,21 @@ def trade_stats(probs: np.ndarray, y: np.ndarray, thr: float) -> tuple:
 
 def train_and_validate(df: pd.DataFrame, payout: float = 0.85, horizons=HORIZONS,
                        n_folds: int = 5, min_trades: int = 100, holdout_frac: float = 0.2,
-                       min_holdout_trades: int = 30, log=print) -> dict:
+                       min_holdout_trades: int = 30, tf: int = 1, log=print) -> dict:
     """Walk-forward on the older 80% picks a confidence threshold; the newest 20%
     (never used for any choice) must then confirm it. Only confirmed expiries trade."""
     feats = build_features(df)
     be = breakeven(payout)
-    bundle = {"payout": payout, "breakeven": be, "horizons": {},
+    bundle = {"payout": payout, "breakeven": be, "horizons": {}, "tf": tf,
               "trained_on_rows": len(df),
               "trained_until": str(df.index[-1]) if len(df) else None}
     for h in horizons:
-        X, y = dataset(df, h, feats)
+        X, y = dataset(df, h, feats, tf)
         n_hold = int(len(X) * holdout_frac)
         dev_end = len(X) - n_hold - h  # purge gap so dev labels never peek into holdout
         Xd, yd = X.iloc[:dev_end], y.iloc[:dev_end]
         Xh, yh = X.iloc[len(X) - n_hold:], y.iloc[len(X) - n_hold:]
-        log(f"\n=== Expiry {h} min | {len(Xd)} dev + {len(Xh)} final-exam samples ===")
+        log(f"\n=== Expiry {h * tf} min ({tf}-min candles) | {len(Xd)} dev + {len(Xh)} final-exam samples ===")
         probs, parts = walk_forward(Xd, yd, h, n_folds=n_folds)
         yy = yd.loc[probs.index]
         acc = float(np.mean((probs.to_numpy() > 0.5) == (yy.to_numpy() == 1)))

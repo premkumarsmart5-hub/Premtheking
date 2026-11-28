@@ -64,7 +64,7 @@ class IQOptionSource:
         if self.api is None or not self.api.check_connect():
             self.connect()
 
-    def _get_with_retry(self, asset, n, end_time, timeout=30, tries=5):
+    def _get_with_retry(self, asset, n, end_time, timeout=30, tries=5, size=60):
         """get_candles can hang forever when the internet drops: time it out,
         reconnect and try again."""
         import threading
@@ -73,7 +73,7 @@ class IQOptionSource:
 
             def work():
                 try:
-                    box["v"] = self.api.get_candles(asset, 60, n, end_time)
+                    box["v"] = self.api.get_candles(asset, size, n, end_time)
                 except Exception as e:  # noqa: BLE001
                     box["e"] = e
 
@@ -91,15 +91,16 @@ class IQOptionSource:
                 print(f"  reconnect failed: {e}", flush=True)
         raise ConnectionError(f"gave up on {asset} after {tries} tries - check your internet")
 
-    def candles(self, asset: str, count: int = 300, end_time: float = None) -> pd.DataFrame:
-        """Fetch up to `count` 1-minute candles ending at end_time (default: now)."""
+    def candles(self, asset: str, count: int = 300, end_time: float = None,
+                size: int = 60) -> pd.DataFrame:
+        """Fetch up to `count` candles of `size` seconds ending at end_time (default: now)."""
         self._ensure()
         end_time = end_time or time.time()
         out = []
         remaining = count
         while remaining > 0:
             n = min(1000, remaining)
-            batch = self._get_with_retry(asset, n, end_time)
+            batch = self._get_with_retry(asset, n, end_time, size=size)
             if not batch:
                 break
             out = batch + out
@@ -109,7 +110,7 @@ class IQOptionSource:
                 break
         return to_frame(out)
 
-    def check_asset(self, asset: str):
+    def check_asset(self, asset: str, size: int = 60):
         """Fail fast for unknown / closed assets (the library would retry forever)."""
         try:
             from iqoptionapi.constants import ACTIVES
@@ -118,17 +119,17 @@ class IQOptionSource:
         except ImportError:
             pass
         self._ensure()
-        probe = self._get_with_retry(asset, 5, time.time(), timeout=20, tries=2)
+        probe = self._get_with_retry(asset, 5, time.time(), timeout=20, tries=2, size=size)
         if not probe:
             raise ValueError(f"{asset} returned no candles (closed right now?)")
 
-    def history(self, asset: str, days: float = 7, log=print) -> pd.DataFrame:
-        self.check_asset(asset)
-        total = int(days * 24 * 60)
+    def history(self, asset: str, days: float = 7, log=print, size: int = 60) -> pd.DataFrame:
+        self.check_asset(asset, size)
+        total = int(days * 24 * 3600 / size)
         frames, end = [], time.time()
         got = 0
         while got < total:
-            df = self.candles(asset, min(1000, total - got), end)
+            df = self.candles(asset, min(1000, total - got), end, size=size)
             if df.empty:
                 break
             frames.append(df)

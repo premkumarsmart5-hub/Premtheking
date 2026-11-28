@@ -83,11 +83,11 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     return f.replace([np.inf, -np.inf], np.nan)
 
 
-def make_labels(df: pd.DataFrame, horizon: int) -> pd.Series:
+def make_labels(df: pd.DataFrame, horizon: int, tf: int = 1) -> pd.Series:
     """1 = CALL wins (close h candles later is higher), 0 = PUT wins, NaN = tie/unknown.
 
-    Entry is at the close of candle t (that is when the signal is shown), expiry
-    is at the close of candle t+h.
+    `horizon` is in candles, `tf` is the candle size in minutes. Entry is at the
+    close of candle t (when the signal is shown), expiry at the close of candle t+h.
     """
     fut = df["close"].shift(-horizon)
     lab = pd.Series(np.where(fut > df["close"], 1.0, np.where(fut < df["close"], 0.0, np.nan)),
@@ -97,7 +97,7 @@ def make_labels(df: pd.DataFrame, horizon: int) -> pd.Series:
         # Real markets close (weekends, holidays) and candles can be missing: only
         # score trades whose expiry candle is exactly `horizon` minutes later.
         span = pd.Series(df.index, index=df.index).shift(-horizon) - df.index
-        lab[span != pd.Timedelta(minutes=horizon)] = np.nan
+        lab[span != pd.Timedelta(minutes=horizon * tf)] = np.nan
     return lab
 
 
