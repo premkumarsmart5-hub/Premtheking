@@ -47,7 +47,19 @@ def cmd_scan(a):
     assets = [x.strip() for x in a.assets.split(",")] if a.assets else DEFAULT_SCAN
     src = None if a.no_download else data.IQOptionSource(account=a.account).connect()
     horizons = tuple(int(h) for h in a.horizons.split(","))
+    import pandas as pd
+    out = Path("scan_results.csv")
     rows = []
+    if a.resume and out.exists():
+        rows = [r for r in pd.read_csv(out, dtype=str).fillna("-").to_dict("records")
+                if not str(r["verdict"]).startswith("ERROR")]
+        done = {r["asset"] for r in rows}
+        skip = [x for x in assets if x in done]
+        assets = [x for x in assets if x not in done]
+        if skip:
+            print(f"Resuming: already done {', '.join(skip)}")
+    elif out.exists():
+        out.unlink()
     for i, asset in enumerate(assets, 1):
         print(f"\n##### [{i}/{len(assets)}] {asset} #####")
         try:
@@ -74,9 +86,8 @@ def cmd_scan(a):
             print(f"  skipped: {e}")
             rows.append({"asset": asset, "expiry": "-", "accuracy": "-", "exam_win": "-",
                          "exam_trades": 0, "verdict": f"ERROR: {str(e)[:60]}"})
-    import pandas as pd
+        pd.DataFrame(rows).to_csv(out, index=False)  # save progress after every asset
     res = pd.DataFrame(rows)
-    res.to_csv("scan_results.csv", index=False)
     print("\n================ SCAN RESULTS ================")
     print(f"{'asset':<12}{'exp':>4}{'acc':>7}{'exam':>7}  verdict")
     for r in rows:
@@ -159,6 +170,7 @@ def main():
     sc.add_argument("--horizons", default="1,2,3,5")
     sc.add_argument("--account", default="PRACTICE", choices=["PRACTICE", "REAL"])
     sc.add_argument("--no-download", action="store_true", help="use CSVs already in data/")
+    sc.add_argument("--resume", action="store_true", help="skip assets already in scan_results.csv")
     sc.add_argument("--verbose", action="store_true", help="print full reports")
     d = sub.add_parser("demo")
     d.add_argument("--rows", type=int, default=15000)

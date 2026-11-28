@@ -62,6 +62,33 @@ class IQOptionSource:
         if self.api is None or not self.api.check_connect():
             self.connect()
 
+    def _get_with_retry(self, asset, n, end_time, timeout=30, tries=5):
+        """get_candles can hang forever when the internet drops: time it out,
+        reconnect and try again."""
+        import threading
+        for attempt in range(1, tries + 1):
+            box = {}
+
+            def work():
+                try:
+                    box["v"] = self.api.get_candles(asset, 60, n, end_time)
+                except Exception as e:  # noqa: BLE001
+                    box["e"] = e
+
+            t = threading.Thread(target=work, daemon=True)
+            t.start()
+            t.join(timeout)
+            if "v" in box:
+                return box["v"]
+            why = box.get("e", "no answer in %ds" % timeout)
+            print(f"  network problem ({why}); reconnecting, try {attempt}/{tries}…", flush=True)
+            time.sleep(min(60, 5 * attempt))
+            try:
+                self.connect()
+            except (Exception, SystemExit) as e:  # still offline - wait and retry
+                print(f"  reconnect failed: {e}", flush=True)
+        raise ConnectionError(f"gave up on {asset} after {tries} tries - check your internet")
+
     def candles(self, asset: str, count: int = 300, end_time: float = None) -> pd.DataFrame:
         """Fetch up to `count` 1-minute candles ending at end_time (default: now)."""
         self._ensure()
@@ -70,7 +97,7 @@ class IQOptionSource:
         remaining = count
         while remaining > 0:
             n = min(1000, remaining)
-            batch = self.api.get_candles(asset, 60, n, end_time)
+            batch = self._get_with_retry(asset, n, end_time)
             if not batch:
                 break
             out = batch + out
