@@ -141,7 +141,7 @@ def run_rule_live(source, asset, rule_fn, tf, expiry, on_signal, lookback=400,
             if publish:
                 publish({"asset": asset, "candle_time": str(stamp), "price": price, "breakeven": 0.5556,
                          "patterns": [], "indicators": {"strategy": tag},
-                         "scoreboard": tracker.board() if tracker else {},
+                         "tf": tf, **(tracker.snapshot() if tracker else {}),
                          "signals": {f"{expiry}m": {"action": action, "lean": action, "confidence": 1.0 if s else 0.0,
                                                      "reason": "rule fired" if s else "waiting for setup",
                                                      "backtest_win_rate": None, "backtest_trades": 0}}})

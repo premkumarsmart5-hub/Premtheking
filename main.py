@@ -357,7 +357,8 @@ def cmd_forex_live(a):
                 elif a.show_all and sg["confidence"] >= a.show_all:
                     tracker.add(f"AI {k} (unverified)", a.asset, stamp, price, sg["lean"], mins)
                     extra.append(f"  paper: {sg['lean']} {k} (unverified, conf {sg['confidence']:.0%})")
-            res["scoreboard"] = tracker.board()
+            res.update(tracker.snapshot())
+            res["tf"] = a.tf
             print(format_analysis(res), flush=True)
             for line in extra:
                 print(line, flush=True)

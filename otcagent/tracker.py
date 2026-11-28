@@ -18,6 +18,7 @@ class Tracker:
         self.log = Path(log_path)
         self.pending = []
         self.tally = {}
+        self.recent = []  # last finished trades, newest first
 
     def add(self, tag, asset, candle_open, price, action, expiry_min):
         self.pending.append({"tag": tag, "asset": asset, "entry_candle": pd.Timestamp(candle_open),
@@ -49,6 +50,10 @@ class Tracker:
             mark = {"WIN": "✔ WIN", "LOSS": "✘ LOSS", "TIE": "= TIE"}[res]
             lines.append(f"  {mark}: {p['tag']} {p['action']} @ {p['price']:.5f} -> {close:.5f}"
                          f"  ({p['expiry']} min)   {self.score(p['tag'])}")
+            self.recent.insert(0, {"tag": p["tag"], "action": p["action"], "entry": p["price"],
+                                   "close": close, "result": res, "expiry": p["expiry"],
+                                   "time": str(target + pd.Timedelta(minutes=self.tf))})
+            del self.recent[20:]
             with self.log.open("a") as fh:
                 fh.write(json.dumps({**p, "entry_candle": str(p["entry_candle"]), "expiry_close": close,
                                      "result": res}) + "\n")
@@ -64,3 +69,16 @@ class Tracker:
 
     def board(self) -> dict:
         return {tag: self.score(tag) for tag in self.tally}
+
+    def detail(self) -> dict:
+        out = {}
+        for tag, t in self.tally.items():
+            n = t["WIN"] + t["LOSS"]
+            out[tag] = {"wins": t["WIN"], "losses": t["LOSS"], "ties": t["TIE"],
+                        "win_rate": t["WIN"] / n if n else 0.0,
+                        "profit": round(t["WIN"] * self.payout - t["LOSS"], 2)}
+        return out
+
+    def snapshot(self) -> dict:
+        return {"scoreboard": self.board(), "score": self.detail(), "results": self.recent[:10],
+                "pending": len(self.pending)}
