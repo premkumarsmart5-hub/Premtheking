@@ -57,7 +57,10 @@ python main.py collect --asset EURUSD-OTC --days 7    # download history (more i
 python main.py train   --asset EURUSD-OTC --payout 0.85
 python main.py live    --asset EURUSD-OTC --dashboard # open http://127.0.0.1:8080
 python main.py scan    --days 10                      # test 12 OTC pairs, list any with an edge
+python main.py scan    --market real --days 14        # test 12 REAL forex pairs (EURUSD, GBPUSD…)
 ```
+
+**Real markets vs OTC:** real pairs (names without `-OTC`) come from actual interbank trading and are open Monday to Friday only. History can still be downloaded at the weekend. Trades are never scored across a weekend or holiday gap. In live mode, a closed market shows "market closed" instead of signals. IQ Option's payout on real pairs is often lower than on OTC, so pass the real number with `--payout`.
 
 `scan` downloads and tests each asset. Only an asset/expiry that passes **both** checks gets a TRADE verdict:
 1. the walk-forward test on the older 80% of candles

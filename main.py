@@ -4,6 +4,7 @@
   python main.py train    --asset EURUSD-OTC --payout 0.85 # backtest + train AI models
   python main.py live     --asset EURUSD-OTC --dashboard   # live CALL/PUT signals
   python main.py scan     --days 10                       # test 12 OTC pairs, list winners
+  python main.py scan     --market real --days 14         # same for real forex pairs
   python main.py demo                                      # offline demo, no login needed
 """
 import argparse
@@ -19,6 +20,11 @@ def paths(asset):
     safe = asset.replace("/", "_")
     return Path("data") / f"{safe}_1m.csv", Path("models") / f"{safe}.pkl"
 
+
+REAL_SCAN = [  # real interbank forex: open Mon-Fri only
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "EURJPY",
+    "EURGBP", "GBPJPY", "AUDCAD", "NZDUSD", "USDCHF", "EURAUD",
+]
 
 DEFAULT_SCAN = [
     "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDCAD-OTC", "EURGBP-OTC", "EURJPY-OTC",
@@ -44,7 +50,8 @@ def cmd_collect(a):
 
 
 def cmd_scan(a):
-    assets = [x.strip() for x in a.assets.split(",")] if a.assets else DEFAULT_SCAN
+    assets = ([x.strip() for x in a.assets.split(",")] if a.assets
+              else REAL_SCAN if a.market == "real" else DEFAULT_SCAN)
     src = None if a.no_download else data.IQOptionSource(account=a.account).connect()
     horizons = tuple(int(h) for h in a.horizons.split(","))
     import pandas as pd
@@ -163,7 +170,9 @@ def main():
     lv.add_argument("--host", default="127.0.0.1")
     lv.add_argument("--port", type=int, default=8080)
     sc = sub.add_parser("scan", help="collect + test many OTC assets, list the ones with an edge")
-    sc.add_argument("--assets", help="comma list, default: 12 common OTC pairs")
+    sc.add_argument("--market", choices=["otc", "real"], default="otc",
+                    help="otc = broker OTC pairs (default), real = real forex pairs (Mon-Fri)")
+    sc.add_argument("--assets", help="comma list, default: 12 pairs of the chosen --market")
     sc.add_argument("--days", type=float, default=10)
     sc.add_argument("--payout", type=float, default=0.85)
     sc.add_argument("--folds", type=int, default=3)

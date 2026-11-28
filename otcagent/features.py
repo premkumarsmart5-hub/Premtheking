@@ -93,6 +93,11 @@ def make_labels(df: pd.DataFrame, horizon: int) -> pd.Series:
     lab = pd.Series(np.where(fut > df["close"], 1.0, np.where(fut < df["close"], 0.0, np.nan)),
                     index=df.index)
     lab[fut.isna()] = np.nan
+    if isinstance(df.index, pd.DatetimeIndex) and len(df) > horizon:
+        # Real markets close (weekends, holidays) and candles can be missing: only
+        # score trades whose expiry candle is exactly `horizon` minutes later.
+        span = pd.Series(df.index, index=df.index).shift(-horizon) - df.index
+        lab[span != pd.Timedelta(minutes=horizon)] = np.nan
     return lab
 
 

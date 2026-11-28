@@ -104,6 +104,11 @@ def run_live(source, asset, bundle, on_signal=print, lookback=400):
             # drop the candle that is still forming (started this minute)
             if len(df) and df.index[-1].timestamp() > time.time() - 60:
                 df = df.iloc[:-1]
+            if not len(df) or df.index[-1].timestamp() < time.time() - 180:
+                last = df.index[-1] if len(df) else "never"
+                print(f"{asset}: market closed / no fresh candles (last {last}) - no signals",
+                      flush=True)
+                continue
             on_signal(generate(df, bundle, asset))
         except Exception as e:  # keep running through network hiccups
             print(f"live error: {e}")

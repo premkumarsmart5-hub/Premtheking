@@ -56,3 +56,12 @@ def test_csv_roundtrip_keeps_real_times(tmp_path):
     back = data.load_csv(path)
     assert back.index.equals(df.index.as_unit(back.index.unit))
     assert back.index[0].year == 2026
+
+
+def test_labels_skip_gaps():
+    df = data.synthetic(40, seed=2)
+    df = df.drop(df.index[20:25])  # a 5-minute hole, like a market close
+    lab = make_labels(df, 2)
+    i = df.index.get_loc(df.index[19])
+    assert lab.iloc[i] != lab.iloc[i] and lab.iloc[i - 1] != lab.iloc[i - 1]  # NaN across gap
+    assert lab.iloc[5] == lab.iloc[5]  # normal rows still labelled
