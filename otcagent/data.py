@@ -51,6 +51,10 @@ class IQOptionSource:
             hint = ""
             if e == "you@example.com":
                 hint = "\n  .env still has the EXAMPLE values - edit it and save (CTRL+O, Enter, CTRL+X)."
+            if "credential" not in str(reason).lower() and "password" not in str(reason).lower():
+                raise SystemExit(f"IQ Option connection failed: {reason}\n"
+                                 "  This is a network problem (no internet / timeout), not your "
+                                 "password. Check the connection and run the command again.")
             raise SystemExit(
                 f"IQ Option login failed: {reason}\n"
                 f"  Email used: {masked}  (password length: {len(self.password)})" + hint +
