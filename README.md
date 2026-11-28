@@ -74,6 +74,45 @@ Results go to `scan_results.csv`. Use `--assets GBPUSD-OTC,AUDCAD-OTC` to pick y
 
 Use the payout IQ Option shows for that asset (for example 0.82 or 0.87). Every signal is also appended to `signals_log.jsonl`, so you can check real results later. Retrain every few days, because OTC behaviour changes.
 
+## Forex AI agent (real forex pairs)
+
+One AI agent that studies all 12 real forex pairs together (EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, EURJPY, EURGBP, GBPJPY, AUDCAD, NZDUSD, USDCHF, EURAUD).
+
+**What it looks at on every candle (161+ inputs, never using future candles):**
+- **56 candlestick patterns**, modelled on TA-Lib's library: doji family, hammer, takuri, hanging man, inverted hammer, shooting star, marubozu, spinning top, high wave, belt hold, engulfing, harami (+cross), piercing, dark cloud, doji star, kicking, counterattack, homing pigeon, matching low/high, separating lines, on/in-neck, thrusting, tweezer, morning/evening (doji) star, abandoned baby, three white soldiers, three black crows, identical three crows, three inside/outside, two crows, upside-gap two crows, advance block, stalled pattern, unique three river, stick sandwich, tasuki gap, tristar, three-line strike, rising/falling three methods, ladder bottom, breakaway and hikkake. Gap patterns are checked on candle bodies, because 1–5 minute forex candles rarely gap.
+- **19 indicator setups with standard settings, each read the textbook way** (buy / sell / neutral vote):
+  - RSI(14) 30/70 crosses and zones
+  - MACD(12,26,9) signal cross and zero line
+  - Bollinger(20,2) re-entry
+  - Stochastic(14,3,3) cross below 20 / above 80
+  - ADX(14) > 25 with DI direction
+  - EMA 9/21 cross and EMA 50/200 trend
+  - Ichimoku(9,26,52) TK cross and cloud
+  - Parabolic SAR(0.02, 0.2)
+  - CCI(20) ±100
+  - Williams %R(14) −80/−20
+  - SuperTrend(10,3)
+  - Keltner(20, 2×ATR)
+  - Donchian(20) breakout
+  - Heikin-Ashi colour change
+  - daily pivot S1/R1 rejection
+- **Higher-timeframe trend:** 15m + 1h when trading 1-min candles, or 1h + 4h when trading 5-min candles. It uses closed higher-TF candles only.
+- **Session** (Asia, London, New York, London–NY overlap) and day of week.
+- **Daily pivot points** (P, R1, S1, R2, S2).
+- **Market regime:** trending vs ranging (ADX), volatility rank, efficiency ratio.
+
+The AI is the 3-model ensemble (gradient boosting + logistic regression + history-matching kNN), trained on all pairs pooled. It is tested walk-forward **by time**, then has to pass a final exam on the newest 20% of data. Results are broken down by pair, session and regime.
+
+```bash
+python main.py forex --tf 1 --download            # download 12 pairs, train, backtest (1/2/3/5 min)
+python main.py forex --tf 5 --download            # 5-min candles: 5/10/15 min expiries
+python main.py forex-live --asset EURUSD --tf 1 --dashboard   # live analysis report + CALL/PUT
+```
+
+Leave out `--download` to reuse candles you already have. The live report shows the session, regime, higher-TF trend, the patterns found, which indicators are bullish or bearish, and the verdict for each expiry. A verdict is CALL or PUT only when that expiry passed the backtest, the confidence is high enough, and all 3 AI models agree.
+
+**Rule-based setups** (tested with `strategy`): `trend_pullback` (higher-TF trend + ADX + RSI turn + pattern), `range_reversal` (ADX < 20 range + Bollinger/RSI extreme + reversal pattern), `committee_5` / `committee_7` (5+ / 7+ of the 19 setups agree).
+
 ## Test your own strategy idea
 
 ```bash

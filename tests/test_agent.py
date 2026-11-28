@@ -114,3 +114,20 @@ def test_breakout_finds_planted_breakouts():
     fn = STRATEGIES["breakout_channel"][0]
     assert test_strategy(bk, fn(bk), (2,), 1, 0.85)[0]["pass"]
     assert (fn(bk).iloc[:5000].values == fn(bk.iloc[:5000]).values).all()
+
+
+def test_forex_features_no_lookahead():
+    from otcagent.forex_features import build_forex_features
+    df = data.synthetic(5000, seed=3)
+    full = build_forex_features(df, 1)
+    part = build_forex_features(df.iloc[:3500], 1)
+    a = full.iloc[300:3500].fillna(-999).to_numpy()
+    b = part.iloc[300:3500].fillna(-999).to_numpy()
+    assert np.allclose(a, b, atol=1e-4)
+
+
+def test_candlestick_library_values():
+    from otcagent.candlesticks import detect_all, names
+    p = detect_all(data.synthetic(3000, seed=4))
+    assert len(names(p)) >= 50
+    assert set(np.unique(p[names(p)].to_numpy())) <= {-1, 0, 1}

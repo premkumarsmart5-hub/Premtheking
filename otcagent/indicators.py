@@ -122,3 +122,45 @@ def donchian_pos(df: pd.DataFrame, n=20) -> pd.Series:
     hi = df["high"].rolling(n).max()
     lo = df["low"].rolling(n).min()
     return (df["close"] - lo) / (hi - lo).replace(0, np.nan)
+
+
+def ichimoku(df: pd.DataFrame, tenkan=9, kijun=26, senkou_b=52):
+    """Tenkan, Kijun, and the cloud as it stands at candle t (spans built 26 candles ago)."""
+    def mid(n):
+        return (df["high"].rolling(n).max() + df["low"].rolling(n).min()) / 2
+    t, k = mid(tenkan), mid(kijun)
+    span_a = ((t + k) / 2).shift(kijun)
+    span_b = mid(senkou_b).shift(kijun)
+    return t, k, span_a, span_b
+
+
+def parabolic_sar(df: pd.DataFrame, step=0.02, max_step=0.2) -> pd.Series:
+    """Direction of Parabolic SAR: +1 = SAR below price (uptrend), -1 = above."""
+    hi, lo = df["high"].to_numpy(float), df["low"].to_numpy(float)
+    n = len(df)
+    d = np.ones(n)
+    if n < 3:
+        return pd.Series(d, index=df.index)
+    up, af, ep, sar = True, step, hi[0], lo[0]
+    for i in range(1, n):
+        sar = sar + af * (ep - sar)
+        if up:
+            sar = min(sar, lo[i - 1], lo[i - 2] if i > 1 else lo[i - 1])
+            if lo[i] < sar:
+                up, sar, ep, af = False, ep, lo[i], step
+            elif hi[i] > ep:
+                ep, af = hi[i], min(af + step, max_step)
+        else:
+            sar = max(sar, hi[i - 1], hi[i - 2] if i > 1 else hi[i - 1])
+            if hi[i] > sar:
+                up, sar, ep, af = True, ep, hi[i], step
+            elif lo[i] < ep:
+                ep, af = lo[i], min(af + step, max_step)
+        d[i] = 1 if up else -1
+    return pd.Series(d, index=df.index)
+
+
+def keltner(df: pd.DataFrame, n=20, atr_n=10, mult=2.0):
+    mid = ema(df["close"], n)
+    a = atr(df, atr_n)
+    return mid + mult * a, mid - mult * a

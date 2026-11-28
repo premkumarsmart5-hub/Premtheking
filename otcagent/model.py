@@ -94,9 +94,10 @@ class BoostingModel:
     """Gradient-boosted depth-limited histogram trees with log-loss."""
 
     def __init__(self, n_trees=150, lr=0.05, depth=3, bins=32, min_leaf=60, l2=1.0,
-                 subsample=0.8, seed=7):
+                 subsample=0.8, seed=7, colsample=1.0):
         self.n_trees, self.lr, self.depth, self.bins = n_trees, lr, depth, bins
         self.min_leaf, self.l2, self.subsample, self.seed = min_leaf, l2, subsample, seed
+        self.colsample = colsample
 
     def _bin(self, X):
         Xb = np.zeros(X.shape, dtype=np.int64)  # bin 0 = missing value
@@ -115,28 +116,35 @@ class BoostingModel:
         for j in range(F):
             col = X[~np.isnan(X[:, j]), j]
             self.edges.append(np.unique(np.quantile(col, qs)) if len(col) else np.array([]))
-        Xb = self._bin(X)
+        Xb = self._bin(X).astype(np.int32)
         B = self.bins + 1
         rng = np.random.default_rng(self.seed)
         m = y.mean()
         self.base = float(np.log(np.clip(m, 1e-6, 1 - 1e-6) / np.clip(1 - m, 1e-6, 1)))
         raw = np.full(n, self.base)
         self.trees = []
-        flat_feat = np.arange(F)[None, :] * B
         rows = np.arange(n)
+        n_cols = max(1, int(round(F * self.colsample)))
         for _ in range(self.n_trees):
             p = _sigmoid(raw)
             g, h = p - y, p * (1 - p)
-            use = rng.random(n) < self.subsample
+            use = np.where(rng.random(n) < self.subsample)[0]
+            cols = np.sort(rng.choice(F, n_cols, replace=False)) if n_cols < F else np.arange(F)
+            Fs = len(cols)
+            sub = Xb[np.ix_(use, cols)] + (np.arange(Fs, dtype=np.int32) * B)[None, :]
+            gu, hu = g[use], h[use]
+            gw = np.broadcast_to(gu[:, None], sub.shape).ravel()
+            hw = np.broadcast_to(hu[:, None], sub.shape).ravel()
+            node_u = np.zeros(len(use), dtype=np.int32)
             node = np.zeros(n, dtype=np.int64)
             splits = []
             for d in range(self.depth):
                 nn = 2 ** d
-                idx = (node[use][:, None] * F * B + flat_feat + Xb[use]).ravel()
-                size = nn * F * B
-                G = np.bincount(idx, np.repeat(g[use], F), size).reshape(nn, F, B)
-                Hh = np.bincount(idx, np.repeat(h[use], F), size).reshape(nn, F, B)
-                C = np.bincount(idx, minlength=size).reshape(nn, F, B)
+                idx = (sub + (node_u * (Fs * B))[:, None]).ravel()
+                size = nn * Fs * B
+                G = np.bincount(idx, gw, size).reshape(nn, Fs, B)
+                Hh = np.bincount(idx, hw, size).reshape(nn, Fs, B)
+                C = np.bincount(idx, minlength=size).reshape(nn, Fs, B)
                 GL, HL, CL = G.cumsum(2), Hh.cumsum(2), C.cumsum(2)
                 Gt, Ht, Ct = GL[:, :, -1:], HL[:, :, -1:], CL[:, :, -1:]
                 GR, HR, CR = Gt - GL, Ht - HL, Ct - CL
@@ -145,13 +153,14 @@ class BoostingModel:
                 flat = gain.reshape(nn, -1)
                 best = flat.argmax(axis=1)
                 bgain = flat[np.arange(nn), best]
-                feat, thr = best // B, best % B
+                feat, thr = cols[best // B], best % B
                 thr = np.where(bgain > 1e-12, thr, B)  # no useful split -> everything left
                 splits.append((feat, thr))
                 node = node * 2 + (Xb[rows, feat[node]] > thr[node])
+                node_u = node[use].astype(np.int32)
             leaves = 2 ** self.depth
-            Gs = np.bincount(node[use], g[use], leaves)
-            Hs = np.bincount(node[use], h[use], leaves)
+            Gs = np.bincount(node_u, gu, leaves)
+            Hs = np.bincount(node_u, hu, leaves)
             val = -self.lr * Gs / (Hs + self.l2)
             raw += val[node]
             self.trees.append((splits, val))
@@ -171,8 +180,11 @@ class BoostingModel:
 
 
 class EnsembleModel:
-    def __init__(self, random_state: int = 7):
-        self.gb = BoostingModel(seed=random_state)
+    def __init__(self, random_state: int = 7, fast: bool = False):
+        # fast: each tree sees 50% of rows and 30% of features (like LightGBM's bagging /
+        # feature_fraction) - much quicker on many features, and less overfitting
+        self.gb = (BoostingModel(seed=random_state, subsample=0.5, colsample=0.3) if fast
+                   else BoostingModel(seed=random_state))
         self.lr = LogisticModel()
         self.knn = KNNModel()
         self.columns = None

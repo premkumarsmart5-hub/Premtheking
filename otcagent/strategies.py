@@ -175,6 +175,62 @@ def channel_bounce(df, window=30, direction="up", touch_tol=0.15, min_touches=2,
     return pd.Series(sig, index=df.index)
 
 
+# ----------------------------------------------------------- confluence setups
+
+def _tf_minutes(df):
+    d = pd.Series(df.index).diff().dropna()
+    return max(1, int(round(d.median().total_seconds() / 60))) if len(d) else 1
+
+
+def confluence_trend_pullback(df):
+    """Trend-following pullback: higher-TF trend + ADX trend + RSI turning from a dip
+    + a candlestick pattern in the trend direction."""
+    from .candlesticks import detect_all
+    from .forex_features import htf_features, htf_for
+    tf = _tf_minutes(df)
+    htf = htf_features(df, tf, htf_for(tf)[1])
+    trend = htf.iloc[:, 0]  # htfXX_trend
+    adx = ind.adx(df, 14)[0]
+    r = ind.rsi(df["close"], 14)
+    p = detect_all(df)
+    call = (trend > 0) & (adx > 20) & (r > 40) & (r.shift(1) <= 40) & (p["bull_count"] > 0)
+    put = (trend < 0) & (adx > 20) & (r < 60) & (r.shift(1) >= 60) & (p["bear_count"] > 0)
+    return _sig(call, put)
+
+
+REVERSAL_BULL = ["hammer", "takuri", "inverted_hammer", "dragonfly_doji", "engulfing", "harami",
+                 "piercing", "morning_star", "morning_doji_star", "tweezer", "three_inside",
+                 "three_outside", "belt_hold", "matching_low", "stick_sandwich", "hikkake"]
+
+
+def confluence_range_reversal(df):
+    """Range reversal: ranging market (ADX < 20) + price back inside Bollinger (or RSI
+    extreme) + a bullish / bearish reversal candlestick pattern."""
+    from .candlesticks import detect_all
+    c = df["close"]
+    adx = ind.adx(df, 14)[0]
+    r = ind.rsi(c, 14)
+    mid, sd = c.rolling(20).mean(), c.rolling(20).std()
+    lo, hi = mid - 2 * sd, mid + 2 * sd
+    p = detect_all(df)
+    bull_pat = (p[REVERSAL_BULL] > 0).any(axis=1)
+    bear_names = REVERSAL_BULL + ["shooting_star", "hanging_man", "gravestone_doji", "dark_cloud_cover",
+                                  "evening_star", "evening_doji_star", "advance_block"]
+    bear_pat = (p[[n for n in bear_names if n in p]] < 0).any(axis=1)
+    stretched_lo = (df["low"].rolling(3).min() <= lo) | (r.rolling(3).min() < 30)
+    stretched_hi = (df["high"].rolling(3).max() >= hi) | (r.rolling(3).max() > 70)
+    call = (adx < 20) & stretched_lo & (c > lo) & bull_pat
+    put = (adx < 20) & stretched_hi & (c < hi) & bear_pat
+    return _sig(call, put)
+
+
+def indicator_committee(df, need=5):
+    """At least `need` of the 19 textbook indicator setups vote the same way."""
+    from .forex_features import indicator_votes
+    v = indicator_votes(df)["votes_total"]
+    return _sig(v >= need, v <= -need)
+
+
 STRATEGIES = {
     "rsi_bb_reversal": (rsi_bb_reversal, "Close outside Bollinger(20,2) + RSI<30 CALL / RSI>70 PUT"),
     "ema_cross": (ema_cross, "EMA 9 crosses EMA 21: up = CALL, down = PUT"),
@@ -209,6 +265,12 @@ STRATEGIES = {
                    "FADE: break above flat resistance = PUT, below support = CALL"),
     "fade_level_50": (lambda df: -channel_bounce(df, 50, "flat", mode="breakout"),
                       "FADE, flat levels over 50 candles"),
+    "trend_pullback": (confluence_trend_pullback,
+                       "SETUP: higher-TF trend + ADX>20 + RSI turns from 40/60 + pattern in trend direction"),
+    "range_reversal": (confluence_range_reversal,
+                       "SETUP: ADX<20 range + Bollinger/RSI extreme + reversal candlestick pattern"),
+    "committee_5": (indicator_committee, "SETUP: 5+ of 19 indicator setups agree"),
+    "committee_7": (lambda df: indicator_committee(df, 7), "SETUP: 7+ of 19 indicator setups agree"),
 }
 
 

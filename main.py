@@ -7,6 +7,8 @@
   python main.py scan     --market real --days 14         # same for real forex pairs
   python main.py scan     --tf 5                          # 5-min candles: 5/10/15 min expiries
   python main.py strategy --name all                      # test classic rules on saved data
+  python main.py forex    --tf 1                           # BIG forex agent: train + backtest on all real pairs
+  python main.py forex-live --asset EURUSD --dashboard    # live analysis + CALL/PUT
   python main.py demo                                      # offline demo, no login needed
 """
 import argparse
@@ -253,6 +255,83 @@ def cmd_strategy(a):
     print(f"Full details: strategy_results_{a.tf}m.csv")
 
 
+def forex_model_path(tf):
+    return Path("models") / f"FOREX_AGENT_{tf}m.pkl"
+
+
+def real_pairs_with_data(tf):
+    return sorted(p.name[: -len(f"_{tf}m.csv")] for p in Path("data").glob(f"*_{tf}m.csv")
+                  if "-OTC" not in p.name and p.name[: -len(f"_{tf}m.csv")] in REAL_SCAN)
+
+
+def cmd_forex(a):
+    from otcagent.forex_agent import train_forex
+    pairs = [x.strip() for x in a.assets.split(",")] if a.assets else REAL_SCAN
+    if a.download:
+        src = data.IQOptionSource(account=a.account).connect()
+        for p_ in pairs:
+            try:
+                collect_asset(src, p_, default_days(a), a.tf)
+            except (Exception, SystemExit) as e:
+                print(f"  skipped {p_}: {e}")
+    have = set(real_pairs_with_data(a.tf))
+    pairs = [p_ for p_ in pairs if p_ in have]
+    if len(pairs) < 2:
+        raise SystemExit(f"Need data for at least 2 real pairs ({a.tf}-min). Run with --download, "
+                         f"or: python main.py scan --market real --tf {a.tf}")
+    frames = {p_: data.load_csv(paths(p_, a.tf)[0]) for p_ in pairs}
+    bundle = train_forex(frames, tf=a.tf, horizons=expiries_to_candles(a), payout=a.payout,
+                         n_folds=a.folds, max_rows=a.max_rows)
+    Path("models").mkdir(exist_ok=True)
+    save_bundle(bundle, forex_model_path(a.tf))
+    print("\n================ FOREX AGENT SUMMARY ================")
+    for h, e in bundle["horizons"].items():
+        ex = e.get("exam") or {}
+        verdict = f"TRADE at conf >= {e['threshold']:.2f}" if e["threshold"] else "NO TRADE"
+        extra = f", exam {ex['win_rate']:.1%} over {ex['trades']}" if ex else ""
+        print(f"  {h * a.tf:>3}m: {verdict}  (walk-forward accuracy {e['oos_accuracy']:.1%}{extra})")
+    print(f"Break-even at {a.payout:.0%} payout: {1 / (1 + a.payout):.2%}. Model: {forex_model_path(a.tf)}")
+
+
+def cmd_forex_live(a):
+    import time as _t
+    from otcagent.forex_agent import analyse, format_analysis
+    mp = forex_model_path(a.tf)
+    if not mp.exists():
+        raise SystemExit(f"No model {mp}. Run first:  python main.py forex --tf {a.tf}")
+    bundle = load_bundle(mp)
+    if a.asset not in bundle["pairs"]:
+        print(f"note: {a.asset} was not in training ({', '.join(bundle['pairs'])}); "
+              "analysis still works but is less reliable.")
+    src = data.IQOptionSource(account=a.account).connect()
+    publish = None
+    if a.dashboard:
+        from otcagent import dashboard
+        dashboard.serve(a.host, a.port)
+        publish = dashboard.publish
+    sec = 60 * a.tf
+    lookback = 3000 if a.tf == 1 else 2000
+    log = Path("forex_signals_log.jsonl")
+    print(f"Forex agent live on {a.asset}, {a.tf}-min candles. Ctrl+C to stop.")
+    while True:
+        _t.sleep(sec - (_t.time() % sec) + 1.0)
+        try:
+            df = src.candles(a.asset, lookback, size=sec)
+            if len(df) and df.index[-1].timestamp() > _t.time() - sec:
+                df = df.iloc[:-1]
+            if not len(df) or df.index[-1].timestamp() < _t.time() - 3 * sec:
+                print(f"{a.asset}: market closed / no fresh candles - no signals", flush=True)
+                continue
+            res = analyse(df, bundle, a.asset)
+            print(format_analysis(res), flush=True)
+            with log.open("a") as fh:
+                fh.write(json.dumps(res) + "\n")
+            if publish:
+                publish(res)
+        except Exception as e:  # keep running through network hiccups
+            print(f"live error: {e}", flush=True)
+
+
 def cmd_demo(a):
     print("Demo on synthetic candles with a hidden pattern (no login needed).")
     df = data.synthetic(n=a.rows, edge=0.65, seed=3)
@@ -305,12 +384,29 @@ def main():
     st.add_argument("--expiries", help="minutes, default 1,2,3,5 (--tf 1) or 5,10,15 (--tf 5)")
     st.add_argument("--payout", type=float, default=0.85)
     st.add_argument("--since", help="only count trades from this date (YYYY-MM-DD), e.g. new data")
+    fx = sub.add_parser("forex", help="train + backtest the big forex agent on all real pairs")
+    fx.add_argument("--tf", type=int, choices=[1, 5], default=1)
+    fx.add_argument("--expiries", help="minutes, default 1,2,3,5 (--tf 1) or 5,10,15 (--tf 5)")
+    fx.add_argument("--assets", help="comma list, default: the 12 real pairs")
+    fx.add_argument("--payout", type=float, default=0.80)
+    fx.add_argument("--folds", type=int, default=3)
+    fx.add_argument("--max-rows", type=int, default=60000, help="most recent rows used to train")
+    fx.add_argument("--download", action="store_true", help="download fresh candles first")
+    fx.add_argument("--days", type=float, help="history to download, default 10 (1m) / 60 (5m)")
+    fx.add_argument("--account", default="PRACTICE", choices=["PRACTICE", "REAL"])
+    fl = sub.add_parser("forex-live", help="live analysis + CALL/PUT from the forex agent")
+    fl.add_argument("--asset", default="EURUSD")
+    fl.add_argument("--tf", type=int, choices=[1, 5], default=1)
+    fl.add_argument("--account", default="PRACTICE", choices=["PRACTICE", "REAL"])
+    fl.add_argument("--dashboard", action="store_true")
+    fl.add_argument("--host", default="127.0.0.1")
+    fl.add_argument("--port", type=int, default=8080)
     d = sub.add_parser("demo")
     d.add_argument("--rows", type=int, default=15000)
     d.add_argument("--payout", type=float, default=0.85)
     a = p.parse_args()
     {"collect": cmd_collect, "train": cmd_train, "live": cmd_live, "demo": cmd_demo,
-     "scan": cmd_scan, "strategy": cmd_strategy}[a.cmd](a)
+     "scan": cmd_scan, "strategy": cmd_strategy, "forex": cmd_forex, "forex-live": cmd_forex_live}[a.cmd](a)
 
 
 if __name__ == "__main__":
