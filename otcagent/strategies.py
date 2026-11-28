@@ -98,6 +98,63 @@ def all_patterns_vote(df):
     return _sig(score >= 2, score <= -2)
 
 
+def channel_bounce(df, window=30, direction="up", touch_tol=0.15, min_touches=2):
+    """Trend-channel bounce (your drawing).
+
+    The channel is built from the `window` candles BEFORE candle t:
+      * a least-squares trend line through the closes
+      * upper line = parallel line through the highest high, lower = through the lowest low
+      * a valid channel needs >= `min_touches` swing highs near the upper line and
+        swing lows near the lower line (price zig-zagging between them)
+      * direction: "up" = only rising channels (as drawn), "down" = falling, "any"
+    Candle t reaches the top zone of the channel (within touch_tol of the upper line)
+    and closes red, still inside -> PUT. Reaches the bottom zone and closes green -> CALL.
+    """
+    from numpy.lib.stride_tricks import sliding_window_view as win
+    n = len(df)
+    sig = np.zeros(n, dtype=int)
+    if n <= window + 2:
+        return pd.Series(sig, index=df.index)
+    hi, lo, cl = (df[c].to_numpy(float) for c in ("high", "low", "close"))
+    # swing points (needs the next candle, so the window's last candle is never a swing)
+    sh = np.zeros(n, bool)
+    sl = np.zeros(n, bool)
+    sh[1:-1] = (hi[1:-1] >= hi[:-2]) & (hi[1:-1] >= hi[2:])
+    sl[1:-1] = (lo[1:-1] <= lo[:-2]) & (lo[1:-1] <= lo[2:])
+    # windows ending at t-1 for t = window .. n-1
+    Wc, Wh, Wl = win(cl[:-1], window), win(hi[:-1], window), win(lo[:-1], window)
+    Wsh, Wsl = win(sh[:-1], window).copy(), win(sl[:-1], window).copy()
+    Wsh[:, -1] = False
+    Wsl[:, -1] = False
+    x = np.arange(window, dtype=float)
+    xm = x.mean()
+    slope = ((Wc - Wc.mean(1, keepdims=True)) * (x - xm)).sum(1) / ((x - xm) ** 2).sum()
+    icpt = Wc.mean(1) - slope * xm
+    line = icpt[:, None] + slope[:, None] * x
+    up_off = (Wh - line).max(1)
+    lo_off = (Wl - line).min(1)
+    width = up_off - lo_off
+    near_up = Wsh & ((Wh - line) >= (up_off - touch_tol * width)[:, None])
+    near_lo = Wsl & ((Wl - line) <= (lo_off + touch_tol * width)[:, None])
+    valid = (near_up.sum(1) >= min_touches) & (near_lo.sum(1) >= min_touches) & (width > 0)
+    # slope must be meaningful: channel rises/falls by >= 25% of its width over the window
+    rise = slope * window / np.where(width > 0, width, np.nan)
+    if direction == "up":
+        valid &= rise >= 0.25
+    elif direction == "down":
+        valid &= rise <= -0.25
+    proj = icpt + slope * window  # trend line projected to candle t
+    U, L = proj + up_off, proj + lo_off
+    t = np.arange(window, n)
+    op = df["open"].to_numpy(float)
+    band = touch_tol * width
+    # reaches the line zone and shows rejection: red candle at the top, green at the bottom
+    put = valid & (hi[t] >= U - band) & (cl[t] < op[t]) & (cl[t] < U)
+    call = valid & (lo[t] <= L + band) & (cl[t] > op[t]) & (cl[t] > L)
+    sig[t] = np.where(put & ~call, -1, np.where(call & ~put, 1, 0))
+    return pd.Series(sig, index=df.index)
+
+
 STRATEGIES = {
     "rsi_bb_reversal": (rsi_bb_reversal, "Close outside Bollinger(20,2) + RSI<30 CALL / RSI>70 PUT"),
     "ema_cross": (ema_cross, "EMA 9 crosses EMA 21: up = CALL, down = PUT"),
@@ -109,6 +166,12 @@ STRATEGIES = {
     "pin_bar_at_band": (pin_bar_at_band, "Hammer/shooting star touching Bollinger band -> reversal"),
     "supertrend_flip": (supertrend_flip, "SuperTrend(10,3) changes direction"),
     "patterns_vote": (all_patterns_vote, "2+ bullish candlestick patterns CALL / 2+ bearish PUT"),
+    "channel_up": (lambda df: channel_bounce(df, 30, "up"),
+                   "YOUR IDEA: rising channel (30 candles), touch top = PUT, touch bottom = CALL"),
+    "channel_up_50": (lambda df: channel_bounce(df, 50, "up"),
+                      "YOUR IDEA, longer channel (50 candles)"),
+    "channel_any": (lambda df: channel_bounce(df, 30, "any"),
+                    "YOUR IDEA on rising, falling or flat channels (30 candles)"),
 }
 
 

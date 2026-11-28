@@ -78,3 +78,19 @@ def test_strategies_find_planted_rule_only():
     for name, (fn, _) in STRATEGIES.items():
         s = fn(df)
         assert len(s) == len(df) and set(s.unique()) <= {-1, 0, 1}, name
+
+
+def test_channel_bounce_no_lookahead_and_finds_channel():
+    import pandas as pd
+    from otcagent.strategies import channel_bounce, test_strategy
+    df = data.synthetic(5000, seed=5)
+    assert (channel_bounce(df, 30, "any").iloc[:3500].values
+            == channel_bounce(df.iloc[:3500], 30, "any").values).all()
+    n = 6000
+    t = np.arange(n)
+    c = 1.1 + t * 3e-6 + np.sin(t / 2.2) * 3e-4 + np.random.default_rng(1).normal(0, 4e-5, n)
+    o = np.r_[c[0], c[:-1]]
+    ch = pd.DataFrame({"open": o, "high": np.maximum(o, c) + 1e-5, "low": np.minimum(o, c) - 1e-5,
+                       "close": c}, index=pd.date_range("2026-01-01", periods=n, freq="1min", tz="UTC"))
+    r = test_strategy(ch, channel_bounce(ch, 30, "up"), (2,), 1, 0.85)[0]
+    assert r["pass"] and r["win_rate"] > 0.7
