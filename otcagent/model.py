@@ -95,10 +95,11 @@ class BoostingModel:
     """Gradient-boosted depth-limited histogram trees with log-loss."""
 
     def __init__(self, n_trees=150, lr=0.05, depth=3, bins=32, min_leaf=60, l2=1.0,
-                 subsample=0.8, seed=7, colsample=1.0):
+                 subsample=0.8, seed=7, colsample=1.0, always=()):
         self.n_trees, self.lr, self.depth, self.bins = n_trees, lr, depth, bins
         self.min_leaf, self.l2, self.subsample, self.seed = min_leaf, l2, subsample, seed
         self.colsample = colsample
+        self.always = tuple(always)  # feature indices every tree may use (e.g. pair identity)
 
     def _bin(self, X):
         Xb = np.zeros(X.shape, dtype=np.int64)  # bin 0 = missing value
@@ -130,7 +131,10 @@ class BoostingModel:
             p = _sigmoid(raw)
             g, h = p - y, p * (1 - p)
             use = np.where(rng.random(n) < self.subsample)[0]
-            cols = np.sort(rng.choice(F, n_cols, replace=False)) if n_cols < F else np.arange(F)
+            if n_cols < F:
+                cols = np.union1d(rng.choice(F, n_cols, replace=False), np.array(self.always, dtype=int))
+            else:
+                cols = np.arange(F)
             Fs = len(cols)
             sub = Xb[np.ix_(use, cols)] + (np.arange(Fs, dtype=np.int32) * B)[None, :]
             gu, hu = g[use], h[use]
@@ -192,6 +196,8 @@ class EnsembleModel:
 
     def fit(self, X: pd.DataFrame, y: pd.Series):
         self.columns = list(X.columns)
+        self.gb.always = tuple(i for i, c in enumerate(self.columns)
+                               if c.startswith("pair_") or c == "streak")
         yv = y.astype(float).values
         self.gb.fit(X.values, yv)
         self.lr.fit(X.values, yv)
