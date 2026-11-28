@@ -65,3 +65,16 @@ def test_labels_skip_gaps():
     i = df.index.get_loc(df.index[19])
     assert lab.iloc[i] != lab.iloc[i] and lab.iloc[i - 1] != lab.iloc[i - 1]  # NaN across gap
     assert lab.iloc[5] == lab.iloc[5]  # normal rows still labelled
+
+
+def test_strategies_find_planted_rule_only():
+    from otcagent.strategies import STRATEGIES, test_strategy
+    for edge, expect in ((0.7, True), (0.0, False)):
+        df = data.synthetic(8000, edge=edge, seed=3)
+        fn = STRATEGIES["three_candle_reversal"][0]
+        res = test_strategy(df, fn(df), (1,), 1, 0.85)
+        assert res[0]["pass"] is expect
+    df = data.synthetic(3000, seed=5)
+    for name, (fn, _) in STRATEGIES.items():
+        s = fn(df)
+        assert len(s) == len(df) and set(s.unique()) <= {-1, 0, 1}, name

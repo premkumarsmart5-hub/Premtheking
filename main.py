@@ -6,6 +6,7 @@
   python main.py scan     --days 10                       # test 12 OTC pairs, list winners
   python main.py scan     --market real --days 14         # same for real forex pairs
   python main.py scan     --tf 5                          # 5-min candles: 5/10/15 min expiries
+  python main.py strategy --name all                      # test classic rules on saved data
   python main.py demo                                      # offline demo, no login needed
 """
 import argparse
@@ -166,6 +167,58 @@ def cmd_live(a):
     run_live(src, a.asset, bundle, on_signal)
 
 
+def cmd_strategy(a):
+    import pandas as pd
+    from otcagent.strategies import STRATEGIES, test_strategy
+    if a.list:
+        for k, (_, desc) in STRATEGIES.items():
+            print(f"{k:<22} {desc}")
+        return
+    names = list(STRATEGIES) if a.name == "all" else [x.strip() for x in a.name.split(",")]
+    bad = [n for n in names if n not in STRATEGIES]
+    if bad:
+        raise SystemExit(f"unknown strategy {bad}. See: python main.py strategy --list")
+    if a.assets:
+        assets = [x.strip() for x in a.assets.split(",")]
+    else:
+        assets = sorted(p.name[: -len(f"_{a.tf}m.csv")] for p in Path("data").glob(f"*_{a.tf}m.csv"))
+    if not assets:
+        raise SystemExit(f"No {a.tf}-min data in data/. Run collect or scan with --tf {a.tf} first.")
+    horizons = expiries_to_candles(a)
+    frames = {}
+    for asset in assets:
+        try:
+            frames[asset] = data.load_csv(paths(asset, a.tf)[0])
+        except (Exception, SystemExit) as e:
+            print(f"skip {asset}: {e}")
+    print(f"Testing {len(names)} strateg{'y' if len(names) == 1 else 'ies'} on {len(frames)} assets, "
+          f"{a.tf}-min candles, break-even {1 / (1 + a.payout):.2%}")
+    rows = []
+    for name in names:
+        fn, desc = STRATEGIES[name]
+        for asset, df in frames.items():
+            for r_ in test_strategy(df, fn(df), horizons, a.tf, a.payout):
+                rows.append({"strategy": name, "asset": asset, **r_})
+    res = pd.DataFrame(rows)
+    res.to_csv(f"strategy_results_{a.tf}m.csv", index=False)
+    print(f"\n{'strategy':<22}{'exp':>4}{'trades':>8}{'win%':>7}{'pass':>5}")
+    for (name, exp), g in res.groupby(["strategy", "expiry"], sort=False):
+        n, w = g["trades"].sum(), g["wins"].sum()
+        print(f"{name:<22}{exp:>4}{n:>8}{(w / n if n else 0):>7.1%}{int(g['pass'].sum()):>3}/{len(g)}")
+    good = res[res["pass"]]
+    print(f"\n(win% = all assets together; pass = assets where it beat break-even with "
+          f"95% confidence AND on the newest 20%)")
+    if len(good):
+        print("\nPASSED:")
+        for _, g in good.iterrows():
+            print(f"  {g['strategy']} {g['asset']} {g['expiry']}: {g['win_rate']:.1%} over "
+                  f"{g['trades']} trades, newest 20%: {g['exam_win_rate']:.1%}")
+        print("Several strategies x assets were tested - re-check any pass on NEW data before trusting it.")
+    else:
+        print("No strategy/asset/expiry beat break-even.")
+    print(f"Full details: strategy_results_{a.tf}m.csv")
+
+
 def cmd_demo(a):
     print("Demo on synthetic candles with a hidden pattern (no login needed).")
     df = data.synthetic(n=a.rows, edge=0.65, seed=3)
@@ -208,12 +261,19 @@ def main():
     sc.add_argument("--no-download", action="store_true", help="use CSVs already in data/")
     sc.add_argument("--resume", action="store_true", help="skip assets already in scan_results.csv")
     sc.add_argument("--verbose", action="store_true", help="print full reports")
+    st = sub.add_parser("strategy", help="test rule-based strategies on downloaded candles")
+    st.add_argument("--name", default="all", help="strategy name(s), comma list, or 'all'")
+    st.add_argument("--list", action="store_true", help="show available strategies")
+    st.add_argument("--assets", help="comma list, default: every asset with data for --tf")
+    st.add_argument("--tf", type=int, choices=[1, 5], default=1)
+    st.add_argument("--expiries", help="minutes, default 1,2,3,5 (--tf 1) or 5,10,15 (--tf 5)")
+    st.add_argument("--payout", type=float, default=0.85)
     d = sub.add_parser("demo")
     d.add_argument("--rows", type=int, default=15000)
     d.add_argument("--payout", type=float, default=0.85)
     a = p.parse_args()
     {"collect": cmd_collect, "train": cmd_train, "live": cmd_live, "demo": cmd_demo,
-     "scan": cmd_scan}[a.cmd](a)
+     "scan": cmd_scan, "strategy": cmd_strategy}[a.cmd](a)
 
 
 if __name__ == "__main__":
