@@ -56,7 +56,15 @@ python main.py demo                                   # offline test, no login
 python main.py collect --asset EURUSD-OTC --days 7    # download history (more is better)
 python main.py train   --asset EURUSD-OTC --payout 0.85
 python main.py live    --asset EURUSD-OTC --dashboard # open http://127.0.0.1:8080
+python main.py scan    --days 10                      # test 12 OTC pairs, list any with an edge
 ```
+
+`scan` downloads and tests each asset. Only an asset/expiry that passes **both** checks gets a TRADE verdict:
+1. the walk-forward test on the older 80% of candles
+2. a final exam on the newest 20% of candles, which are never used to choose any setting
+
+Testing many assets makes lucky passes more likely, and the final exam guards against that. `train` uses the same final exam.
+Results go to `scan_results.csv`. Use `--assets GBPUSD-OTC,AUDCAD-OTC` to pick your own list, or `--verbose` to see full reports.
 
 Use the payout IQ Option shows for that asset (for example 0.82 or 0.87). Every signal is also appended to `signals_log.jsonl`, so you can check real results later. Retrain every few days, because OTC behaviour changes.
 

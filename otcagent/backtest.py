@@ -89,40 +89,72 @@ def choose_threshold(tab: pd.DataFrame):
     return best.to_dict()
 
 
+def trade_stats(probs: np.ndarray, y: np.ndarray, thr: float) -> tuple:
+    call, put = probs >= thr, probs <= 1 - thr
+    n = int(call.sum() + put.sum())
+    wins = int((call & (y == 1)).sum() + (put & (y == 0)).sum())
+    return n, wins
+
+
 def train_and_validate(df: pd.DataFrame, payout: float = 0.85, horizons=HORIZONS,
-                       n_folds: int = 5, min_trades: int = 100, log=print) -> dict:
+                       n_folds: int = 5, min_trades: int = 100, holdout_frac: float = 0.2,
+                       min_holdout_trades: int = 30, log=print) -> dict:
+    """Walk-forward on the older 80% picks a confidence threshold; the newest 20%
+    (never used for any choice) must then confirm it. Only confirmed expiries trade."""
     feats = build_features(df)
-    bundle = {"payout": payout, "breakeven": breakeven(payout), "horizons": {},
+    be = breakeven(payout)
+    bundle = {"payout": payout, "breakeven": be, "horizons": {},
               "trained_on_rows": len(df),
               "trained_until": str(df.index[-1]) if len(df) else None}
     for h in horizons:
         X, y = dataset(df, h, feats)
-        log(f"\n=== Expiry {h} min | {len(X)} samples ===")
-        probs, parts = walk_forward(X, y, h, n_folds=n_folds)
-        yy = y.loc[probs.index]
+        n_hold = int(len(X) * holdout_frac)
+        dev_end = len(X) - n_hold - h  # purge gap so dev labels never peek into holdout
+        Xd, yd = X.iloc[:dev_end], y.iloc[:dev_end]
+        Xh, yh = X.iloc[len(X) - n_hold:], y.iloc[len(X) - n_hold:]
+        log(f"\n=== Expiry {h} min | {len(Xd)} dev + {len(Xh)} final-exam samples ===")
+        probs, parts = walk_forward(Xd, yd, h, n_folds=n_folds)
+        yy = yd.loc[probs.index]
         acc = float(np.mean((probs.to_numpy() > 0.5) == (yy.to_numpy() == 1)))
         log(f"Out-of-sample direction accuracy (every candle): {acc:.2%}")
         for k, v in parts.items():
-            a_k = float(np.mean((v.to_numpy() > 0.5) == (y.loc[v.index].to_numpy() == 1)))
+            a_k = float(np.mean((v.to_numpy() > 0.5) == (yd.loc[v.index].to_numpy() == 1)))
             log(f"   {k:<12} alone: {a_k:.2%}")
-        tab = evaluate_thresholds(probs, y, payout, min_trades)
+        tab = evaluate_thresholds(probs, yd, payout, min_trades)
         best = choose_threshold(tab)
-        log(f"Break-even win rate at {payout:.0%} payout: {breakeven(payout):.2%}")
+        log(f"Break-even win rate at {payout:.0%} payout: {be:.2%}")
         show = tab[tab["threshold"].isin([0.5, 0.55, 0.6, 0.65, 0.7])]
         log(show[["threshold", "trades", "win_rate", "wilson_low", "profit_per_trade"]]
             .to_string(index=False, float_format=lambda v: f"{v:.3f}"))
-        if best:
-            log(f"TRADABLE: use confidence >= {best['threshold']:.2f} "
-                f"(OOS win rate {best['win_rate']:.2%} over {int(best['trades'])} trades)")
-        else:
+        holdout = None
+        threshold = None
+        if not best:
             log("NOT TRADABLE: no confidence level beat break-even with statistical "
                 "confidence. The agent will show NO TRADE for this expiry.")
+        elif n_hold == 0:
+            threshold = best["threshold"]
+        else:
+            m = EnsembleModel().fit(Xd, yd)
+            n, w = trade_stats(m.predict_proba(Xh), yh.to_numpy(), best["threshold"])
+            wr = w / n if n else 0.0
+            holdout = {"trades": n, "wins": w, "win_rate": wr}
+            log(f"Walk-forward pick: confidence >= {best['threshold']:.2f} "
+                f"({best['win_rate']:.2%} over {int(best['trades'])} trades)")
+            log(f"Final exam on newest {n_hold} candles: {wr:.2%} over {n} trades")
+            if n >= min_holdout_trades and wr > be:
+                threshold = best["threshold"]
+                log(f"TRADABLE: confirmed on unseen recent data.")
+            else:
+                why = "too few trades" if n < min_holdout_trades else "below break-even"
+                log(f"NOT TRADABLE: failed the final exam ({why}). Likely luck or the "
+                    "pattern already stopped working.")
         final = EnsembleModel().fit(X, y)
         bundle["horizons"][h] = {
             "model": final,
-            "threshold": best["threshold"] if best else None,
+            "threshold": threshold,
             "oos_accuracy": acc,
-            "oos_best": best,
+            "oos_best": best if threshold else None,
+            "holdout": holdout,
             "table": tab.to_dict("records"),
         }
     return bundle
